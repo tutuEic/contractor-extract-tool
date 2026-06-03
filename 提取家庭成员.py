@@ -64,10 +64,11 @@ def _normalize(text):
 
 
 def _find_section_header(ws, keyword):
-    for row in ws.iter_rows(min_col=1, max_col=1, values_only=False):
-        cell = row[0]
-        if cell.value and keyword in _normalize(cell.value):
-            return cell.row
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, 6):
+            val = ws.cell(r, c).value
+            if val and keyword in _normalize(val):
+                return r
     return None
 
 
@@ -211,11 +212,8 @@ def parse_biao2(filepath, group_name):
     if h1:
         end = (h2 - 1) if h2 else ws.max_row
         for r in range(h1 + 1, end + 1):
-            seq = ws.cell(r, 2).value
             name = ws.cell(r, 3).value
             if not name or str(name).strip() == "":
-                continue
-            if not _is_seq_number(seq):
                 continue
             plots.append({
                 "地块名称": str(name).strip(),
@@ -231,11 +229,8 @@ def parse_biao2(filepath, group_name):
     changes = {}
     if h2:
         for r in range(h2 + 1, ws.max_row + 1):
-            seq = ws.cell(r, 2).value
             name = ws.cell(r, 4).value
             if not name or str(name).strip() == "":
-                continue
-            if not _is_seq_number(seq):
                 continue
             changes[str(name).strip()] = {
                 "变动情况": str(ws.cell(r, 3).value or "").strip(),
