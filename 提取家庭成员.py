@@ -19,14 +19,14 @@ from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 # ── 常量 ──────────────────────────────────────────────────────────────────────
 
 OUTPUT_COLUMNS = (
-    "所属组", "编号", "承包方编码", "承包方代表",
+    "所属组", "承包方编码", "承包方代表",
     "发包方名称", "户内序号",
     "家庭成员姓名", "性别", "身份证号",
     "与承包方代表关系", "变动情况",
 )
 
 OUTPUT_COLUMNS_B2 = (
-    "所属组", "编号", "承包方编码", "承包方代表",
+    "所属组", "承包方编码", "承包方代表",
     "联系方式", "确权总面积(亩)",
     "地块总数", "地块序号",
     "地块名称", "地块编码", "地块面积(亩)",
@@ -34,7 +34,7 @@ OUTPUT_COLUMNS_B2 = (
     "变动情况", "变动面积(亩)", "变动原因",
 )
 
-_HOUSEHOLD_KEY_COLS = (1, 2)
+_HOUSEHOLD_KEY_COLS = (0, 1)
 
 _REDUCE_REMOVE_KEYWORDS = ("嫁", "死", "亡", "去世", "登记错误")
 
@@ -443,7 +443,7 @@ class App(tk.Tk):
 
     def _setup_tree(self, tree, columns):
         col_widths = {
-            "所属组": 60, "编号": 170, "承包方编码": 200, "承包方代表": 90,
+            "所属组": 60, "承包方编码": 200, "承包方代表": 90,
             "发包方名称": 160, "户内序号": 50,
             "家庭成员姓名": 90, "性别": 50, "身份证号": 180,
             "与承包方代表关系": 120, "变动情况": 70,
@@ -542,7 +542,7 @@ class App(tk.Tk):
         self.status_var.set("正在提取%s %d/%d …" % (label, done, total))
 
     # b2 household info columns that should only show once per group
-    _B2_HOUSEHOLD_COLS = frozenset(range(7))  # cols 0-6: 所属组, 编号, 承包方编码, 承包方代表, 联系方式, 确权总面积, 地块总数
+    _B2_HOUSEHOLD_COLS = frozenset(range(6))  # cols 0-5: 所属组, 承包方编码, 承包方代表, 联系方式, 确权总面积, 地块总数
 
     def _fill_tree(self, tree, results, columns, is_b2=False):
         tree.delete(*tree.get_children())
@@ -611,7 +611,7 @@ class App(tk.Tk):
             vals = list(item["values"])
             cur_key = item["key"]
             if is_b2 and prev_key == cur_key:
-                for ci in range(7):
+                for ci in range(6):
                     vals[ci] = ""
             if prev_key is not None and cur_key != prev_key:
                 parity = 1 - parity
