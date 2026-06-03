@@ -46,17 +46,31 @@ _SEP_FILL = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="sol
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
 
 def _parse_filename(filename):
+    # 先匹配 编号-姓名-表1.xlsx
     m = re.match(r"^(.+?)-(.+?)-表1\.xlsx$", filename)
     if m:
         return m.group(1), m.group(2)
-    return None, None
+    # 再匹配 编号-姓名表1.xlsx（只有一个横线）
+    m = re.match(r"^(.+?)-(.+?)表1\.xlsx$", filename)
+    if m:
+        return m.group(1), m.group(2)
+    # 无横线时整体作为编号
+    base = filename.replace("表1.xlsx", "")
+    return base.rstrip("-"), ""
 
 
 def _parse_filename2(filename):
+    # 先匹配 编号-姓名-表2.xlsx
     m = re.match(r"^(.+?)-(.+?)-表2\.xlsx$", filename)
     if m:
         return m.group(1), m.group(2)
-    return None, None
+    # 再匹配 编号-姓名表2.xlsx（只有一个横线）
+    m = re.match(r"^(.+?)-(.+?)表2\.xlsx$", filename)
+    if m:
+        return m.group(1), m.group(2)
+    # 无横线时整体作为编号
+    base = filename.replace("表2.xlsx", "")
+    return base.rstrip("-"), ""
 
 
 def _normalize(text):
@@ -290,7 +304,7 @@ def scan_folder(folder_path):
     xlsx_files = []
     for root, dirs, files in os.walk(folder_path):
         for f in files:
-            if f.endswith("-表1.xlsx") and not f.startswith("~$"):
+            if f.endswith("表1.xlsx") and not f.startswith("~$"):
                 rel = os.path.relpath(root, folder_path)
                 group = rel if rel != "." else os.path.basename(folder_path)
                 xlsx_files.append((os.path.join(root, f), group))
@@ -316,7 +330,7 @@ def scan_folder_b2(folder_path):
     xlsx_files = []
     for root, dirs, files in os.walk(folder_path):
         for f in files:
-            if f.endswith("-表2.xlsx") and not f.startswith("~$"):
+            if f.endswith("表2.xlsx") and not f.startswith("~$"):
                 rel = os.path.relpath(root, folder_path)
                 group = rel if rel != "." else os.path.basename(folder_path)
                 xlsx_files.append((os.path.join(root, f), group))
