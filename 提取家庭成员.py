@@ -478,12 +478,19 @@ class App(tk.Tk):
 
     def _run(self, folder):
         # 表1
+        results = []
+        errors = []
+        done = 0
+        total = 0
         for done, total, results, errors in scan_folder(folder):
             self.after(0, self._update_progress, done, total * 2, '家庭成员')
         self.results_b1 = results
         self._all_errors.extend(errors)
         b1_total = done if done else 1
         # 表2
+        results = []
+        errors = []
+        done = 0
         for done, total, results, errors in scan_folder_b2(folder):
             self.after(0, self._update_progress, b1_total + done, b1_total + total, '承包地块')
         self.results_b2 = results
