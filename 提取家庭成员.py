@@ -32,6 +32,7 @@ OUTPUT_COLUMNS_B2 = (
     "地块名称", "地块编码", "地块面积(亩)",
     "东至", "西至", "南至", "北至",
     "变动情况", "变动面积(亩)", "变动原因",
+    "变动后东至", "变动后西至", "变动后南至", "变动后北至",
 )
 
 _HOUSEHOLD_KEY_COLS = (0, 1)
@@ -259,6 +260,10 @@ def parse_biao2(filepath, group_name):
                 "变动情况": str(ws.cell(r, 3).value or "").strip(),
                 "变动面积(亩)": str(ws.cell(r, 11).value or "").strip(),
                 "变动原因": str(ws.cell(r, 13).value or "").strip(),
+                "变动后东至": str(ws.cell(r, 7).value or "").strip(),
+                "变动后西至": str(ws.cell(r, 8).value or "").strip(),
+                "变动后南至": str(ws.cell(r, 9).value or "").strip(),
+                "变动后北至": str(ws.cell(r, 10).value or "").strip(),
             }
     wb.close()
 
@@ -278,10 +283,14 @@ def parse_biao2(filepath, group_name):
             row["变动情况"] = ch["变动情况"]
             row["变动面积(亩)"] = ch["变动面积(亩)"]
             row["变动原因"] = ch["变动原因"]
+            for dk in ("东至", "西至", "南至", "北至"):
+                row["变动后" + dk] = ch.get("变动后" + dk, "") or "无"
         else:
             row["变动情况"] = "无"
             row["变动面积(亩)"] = ""
             row["变动原因"] = ""
+            for dk in ("东至", "西至", "南至", "北至"):
+                row["变动后" + dk] = "无"
         rows.append(row)
 
     # Newly added plots from changes
@@ -296,6 +305,10 @@ def parse_biao2(filepath, group_name):
             "变动情况": ch["变动情况"],
             "变动面积(亩)": ch["变动面积(亩)"],
             "变动原因": ch["变动原因"],
+            "变动后东至": ch.get("变动后东至", "") or "无",
+            "变动后西至": ch.get("变动后西至", "") or "无",
+            "变动后南至": ch.get("变动后南至", "") or "无",
+            "变动后北至": ch.get("变动后北至", "") or "无",
         })
 
     return info, rows
@@ -453,6 +466,7 @@ class App(tk.Tk):
             "地块面积(亩)": 90,
             "东至": 150, "西至": 150, "南至": 150, "北至": 150,
             "变动面积(亩)": 90, "变动原因": 180,
+            "变动后东至": 150, "变动后西至": 150, "变动后南至": 150, "变动后北至": 150,
         }
         for i, name in enumerate(columns):
             tree.heading(i, text=name)
