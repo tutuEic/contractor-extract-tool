@@ -160,6 +160,12 @@ def parse_biao1(filepath, group_name):
             idx = s1_key_idx[pk]
             section1[idx]["变动情况"] = row["变动情况"]
             section1[idx]["_reason"] = row.get("_reason", "")
+            # 变动区出现"本人"属户主变更，关系按变更后的值填写
+            new_rel = row.get("与承包方代表关系", "").strip()
+            if new_rel:
+                section1[idx]["与承包方代表关系"] = new_rel
+                if new_rel == "本人":
+                    info["承包方代表"] = row["家庭成员姓名"]
         else:
             s2_only.append(row)
 
