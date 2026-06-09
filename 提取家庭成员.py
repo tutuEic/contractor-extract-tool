@@ -591,6 +591,7 @@ class App(tk.Tk):
 
     # b2 household info columns that should only show once per group
     _B2_HOUSEHOLD_COLS = frozenset(range(6))  # cols 0-5: 所属组, 承包方编码, 承包方代表, 联系方式, 确权总面积, 地块总数
+    _B1_HOUSEHOLD_COLS = frozenset({4, 10})  # cols: 户内人口, 调查记事(附记)
 
     def _fill_tree(self, tree, results, columns, is_b2=False):
         tree.delete(*tree.get_children())
@@ -609,6 +610,9 @@ class App(tk.Tk):
             vals = list(item["values"])
             if is_b2 and prev_key == cur_key:
                 for ci in self._B2_HOUSEHOLD_COLS:
+                    vals[ci] = ""
+            if (not is_b2) and prev_key == cur_key:
+                for ci in self._B1_HOUSEHOLD_COLS:
                     vals[ci] = ""
             tree.insert("", tk.END, values=vals, tags=(tag,))
             prev_key = cur_key
@@ -660,6 +664,9 @@ class App(tk.Tk):
             cur_key = item["key"]
             if is_b2 and prev_key == cur_key:
                 for ci in range(6):
+                    vals[ci] = ""
+            if (not is_b2) and prev_key == cur_key:
+                for ci in (4, 10):  # 户内人口, 调查记事
                     vals[ci] = ""
             if prev_key is not None and cur_key != prev_key:
                 parity = 1 - parity
