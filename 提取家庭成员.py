@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 承包方家庭成员 & 承包地块信息提取工具
 从 D:\农经全延保 下所有表1/表2 xlsx 文件中提取信息，汇总到一张表。
@@ -181,6 +181,11 @@ def parse_biao1(filepath, group_name):
             idx = s1_key_idx[pk]
             section1[idx]["变动情况"] = row["变动情况"]
             section1[idx]["_reason"] = row.get("_reason", "")
+            # 确权区身份证号为空或"/"时，用变动区的值同步
+            id_old = section1[idx].get("身份证号", "")
+            id_new = row.get("身份证号", "")
+            if id_new and id_new != "/" and (not id_old or id_old == "/"):
+                section1[idx]["身份证号"] = id_new
             # 变动区出现"本人"属户主变更，关系按变更后的值填写
             new_rel = row.get("与承包方代表关系", "").strip()
             if new_rel:
