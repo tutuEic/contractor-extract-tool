@@ -199,9 +199,11 @@ def parse_biao1(filepath, group_name):
 
     filtered = []
     for row in merged:
-        if _should_remove(row):
-            continue
-        row.pop("_reason", None)
+        reason = row.pop("_reason", "")
+        # 减少的记录不再删除，将原因附在变动情况后面
+        if reason and reason != "无":
+            cur = row.get("变动情况", "")
+            row["变动情况"] = (cur + "（" + reason + "）") if cur else reason
         filtered.append(row)
     return info, filtered
 
