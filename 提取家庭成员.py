@@ -23,6 +23,7 @@ OUTPUT_COLUMNS = (
     "发包方名称", "户内人口",
     "家庭成员姓名", "性别", "身份证号",
     "与承包方代表关系", "变动情况",
+    "调查记事(附记)",
 )
 
 OUTPUT_COLUMNS_B2 = (
@@ -168,6 +169,17 @@ def parse_biao1(filepath, group_name):
 
     section1 = _read_section_data(ws, h1, end_row=h2, include_change_col=False) if h1 else []
     section2 = _read_section_data(ws, h2, include_change_col=True) if h2 else []
+    # 提取调查记事(附记)：取确权区和变动区第一行数据的第14列
+    jishi_parts = []
+    if h1 and h1 + 1 <= ws.max_row:
+        v = str(ws.cell(h1 + 1, 14).value or "").strip()
+        if v and "记事" not in v:
+            jishi_parts.append(v)
+    if h2 and h2 + 1 <= ws.max_row:
+        v = str(ws.cell(h2 + 1, 14).value or "").strip()
+        if v and "记事" not in v and v not in jishi_parts:
+            jishi_parts.append(v)
+    info["调查记事(附记)"] = "；".join(jishi_parts)
     wb.close()
 
     s1_key_idx = {}
@@ -481,6 +493,7 @@ class App(tk.Tk):
             "发包方名称": 160, "户内人口": 50,
             "家庭成员姓名": 90, "性别": 50, "身份证号": 180,
             "与承包方代表关系": 120, "变动情况": 70,
+            "调查记事(附记)": 200,
             "联系方式": 110, "确权总面积(亩)": 90,
             "地块总数": 60, "地块序号": 60,
             "地块名称": 90, "地块编码": 180,
