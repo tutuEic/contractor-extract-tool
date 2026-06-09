@@ -389,39 +389,67 @@ def parse_biao2(filepath, group_name):
             }
     wb.close()
 
-    # Merge
+    # Merge: compute actual areas based on changes
+    def _safe_float(s):
+        try:
+            return float(str(s).strip())
+        except (ValueError, TypeError):
+            return 0.0
+
     rows = []
+    total_actual = 0.0
     for i, p in enumerate(plots, 1):
         ch = changes.pop(p["地块名称"], None)
-        row = {
-            "地块序号": i,
-            "地块名称": p["地块名称"],
-            "地块编码": p["地块编码"],
-            "地块面积(亩)": p["地块面积(亩)"],
-            "东至": p["东至"], "西至": p["西至"],
-            "南至": p["南至"], "北至": p["北至"],
-        }
+        confirmed_area = _safe_float(p["地块面积(亩)"])
         if ch:
-            row["变动情况"] = ch["变动情况"]
-            row["变动面积(亩)"] = ch["变动面积(亩)"]
-            row["变动原因"] = ch["变动原因"]
-            for dk in ("东至", "西至", "南至", "北至"):
-                row["变动后" + dk] = ch.get("变动后" + dk, "") or "无"
+            change_area = _safe_float(ch["变动面积(亩)"])
+            change_type = ch["变动情况"]
+            if "增加" in change_type:
+                actual_area = confirmed_area + change_area
+            elif "减少" in change_type:
+                actual_area = confirmed_area - change_area
+            else:
+                actual_area = confirmed_area
+            row = {
+                "地块序号": i,
+                "地块名称": p["地块名称"],
+                "地块编码": p["地块编码"],
+                "地块面积(亩)": str(round(actual_area, 4)),
+                "东至": ch.get("变动后东至", "") or p["东至"],
+                "西至": ch.get("变动后西至", "") or p["西至"],
+                "南至": ch.get("变动后南至", "") or p["南至"],
+                "北至": ch.get("变动后北至", "") or p["北至"],
+                "变动情况": ch["变动情况"],
+                "变动面积(亩)": ch["变动面积(亩)"],
+                "变动原因": ch["变动原因"],
+            }
         else:
-            row["变动情况"] = "无"
-            row["变动面积(亩)"] = ""
-            row["变动原因"] = ""
-            for dk in ("东至", "西至", "南至", "北至"):
-                row["变动后" + dk] = "无"
+            actual_area = confirmed_area
+            row = {
+                "地块序号": i,
+                "地块名称": p["地块名称"],
+                "地块编码": p["地块编码"],
+                "地块面积(亩)": p["地块面积(亩)"],
+                "东至": p["东至"], "西至": p["西至"],
+                "南至": p["南至"], "北至": p["北至"],
+                "变动情况": "无",
+                "变动面积(亩)": "",
+                "变动原因": "",
+                "变动后东至": "无", "变动后西至": "无",
+                "变动后南至": "无", "变动后北至": "无",
+            }
+        total_actual += actual_area
         rows.append(row)
 
-    # Newly added plots from changes
+    # Newly added plots from changes (not in confirmed section)
     for ch in changes.values():
+        change_area = _safe_float(ch["变动面积(亩)"])
+        total_actual += change_area
         rows.append({
             "地块序号": len(rows) + 1,
             "地块名称": "",
             "地块编码": "",
-            "地块面积(亩)": "",
+            "地块面积(亩)": ch["变动面积(亩)"],
             "东至": "", "西至": "",
             "南至": "", "北至": "",
             "变动情况": ch["变动情况"],
@@ -432,6 +460,9 @@ def parse_biao2(filepath, group_name):
             "变动后南至": ch.get("变动后南至", "") or "无",
             "变动后北至": ch.get("变动后北至", "") or "无",
         })
+
+    # 用计算后的实际总面积替换原始确权总面积
+    info["确权总面积(亩)"] = str(round(total_actual, 4))
 
     return info, rows
 
