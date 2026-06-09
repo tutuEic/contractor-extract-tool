@@ -467,9 +467,10 @@ def scan_folder(folder_path):
             pass
     next_code = max(all_codes) + 1 if all_codes else 1
 
-    # 第一遍：收集所有确权人员，用于跨文件分户匹配
+    # 第一遍：收集确权人员和减少人员，用于跨文件匹配
     confirmed_people = {}  # person_key -> set of file_codes
-    name_to_pks = {}  # name -> [person_key, ...] for name-based fallback
+    reduced_people = {}  # person_key -> set of file_codes (where they were reduced from)
+    name_to_pks = {}  # name -> [person_key, ...]
     for fp, _ in xlsx_files:
         try:
             fn = os.path.basename(fp)
@@ -477,14 +478,16 @@ def scan_folder(folder_path):
             groups = parse_biao1(fp, "_")
             for info, rows in groups:
                 for row in rows:
-                    if "减少" not in row.get("变动情况", ""):
-                        pk = _person_key(row)
+                    pk = _person_key(row)
+                    name = row.get("家庭成员姓名", "").strip()
+                    if name:
+                        pks = name_to_pks.setdefault(name, [])
+                        if pk not in pks:
+                            pks.append(pk)
+                    if "减少" in row.get("变动情况", ""):
+                        reduced_people.setdefault(pk, set()).add(file_code)
+                    else:
                         confirmed_people.setdefault(pk, set()).add(file_code)
-                        name = row.get("家庭成员姓名", "").strip()
-                        if name:
-                            pks = name_to_pks.setdefault(name, [])
-                            if pk not in pks:
-                                pks.append(pk)
         except Exception:
             pass
 
@@ -492,35 +495,38 @@ def scan_folder(folder_path):
         try:
             groups = parse_biao1(fp, group)
             for info, rows in groups:
-                # 分户：分配全村最大号+1
                 if "_split_group" in info:
                     info["承包方编码"] = str(next_code)
                     next_code += 1
-                # 户内人口 = 总人数 - 减少人数
                 reduce_count = sum(1 for r in rows if "减少" in r.get("变动情况", ""))
                 population = len(rows) - reduce_count
+                # 查找此户的父户文件编码
+                this_file_code = info.get("编号", "")
+                parent_code = ""
+                if "_split_group" not in info:
+                    for row in rows:
+                        if "减少" not in row.get("变动情况", ""):
+                            pk = _person_key(row)
+                            parents = reduced_people.get(pk, set())
+                            if not parents:
+                                name = row.get("家庭成员姓名", "").strip()
+                                for cpk in name_to_pks.get(name, []):
+                                    if cpk in reduced_people:
+                                        parents = parents | reduced_people[cpk]
+                            parents = sorted(c for c in parents if c != this_file_code)
+                            if parents:
+                                parent_code = parents[0]
+                                break
                 for row in rows:
                     merged = {**info, **row}
                     merged["户内人口"] = population
-                    # 跨文件分户来源匹配
-                    if "减少" in merged.get("变动情况", "") and "分户" in merged.get("变动情况", ""):
-                        pk = _person_key(row)
-                        src_codes = confirmed_people.get(pk, set())
-                        # 备用：当 person_key 不匹配时（如变动区无 ID），按姓名查找
-                        if not src_codes:
-                            name = row.get("家庭成员姓名", "").strip()
-                            for cpk in name_to_pks.get(name, []):
-                                if cpk in confirmed_people:
-                                    src_codes = src_codes | confirmed_people[cpk]
-                        other_codes = sorted(c for c in src_codes if c != merged.get("编号", ""))
-                        if other_codes:
-                            merged["分户来源"] = ",".join(other_codes)
+                    if (not "减少" in row.get("变动情况", "")) and parent_code:
+                        merged["分户来源"] = parent_code
                     c = tuple(merged.get(col, "") for col in OUTPUT_COLUMNS)
                     results.append({"values": c, "key": _household_key(c)})
         except Exception as e:
             errors.append("%s: %s" % (os.path.basename(fp), str(e)))
         yield idx + 1, total, results, errors
-
 def scan_folder_b2(folder_path):
     results = []
     errors = []
