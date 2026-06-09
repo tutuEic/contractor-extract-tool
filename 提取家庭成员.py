@@ -174,6 +174,13 @@ def parse_biao1(filepath, group_name):
     for i, row in enumerate(section1):
         s1_key_idx[_person_key(row)] = i
 
+    # 记录确权区的老户主（关系为"本人"的人）
+    old_head = ""
+    for row in section1:
+        if row.get("与承包方代表关系", "").strip() == "本人":
+            old_head = row.get("家庭成员姓名", "")
+            break
+
     s2_only = []
     for row in section2:
         pk = _person_key(row)
@@ -186,12 +193,16 @@ def parse_biao1(filepath, group_name):
             id_new = row.get("身份证号", "")
             if id_new and id_new != "/" and (not id_old or id_old == "/"):
                 section1[idx]["身份证号"] = id_new
-            # 变动区出现"本人"属户主变更，关系按变更后的值填写
             new_rel = row.get("与承包方代表关系", "").strip()
             if new_rel:
                 section1[idx]["与承包方代表关系"] = new_rel
                 if new_rel == "本人":
-                    info["承包方代表"] = row["家庭成员姓名"]
+                    # 新户主出现，在变动情况后备注
+                    new_name = row["家庭成员姓名"]
+                    if old_head and new_name != old_head:
+                        note = "更换户主：%s（原：%s）" % (new_name, old_head)
+                        cur_chg = section1[idx].get("变动情况", "")
+                        section1[idx]["变动情况"] = (cur_chg + "（" + note + "）") if cur_chg else note
         else:
             s2_only.append(row)
 
