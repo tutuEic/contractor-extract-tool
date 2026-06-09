@@ -226,27 +226,76 @@ def parse_biao1(filepath, group_name):
     merged = section1 + s2_only
 
     # 解析分户：从变动原因中提取分户信息
-    split_map = {}  # person_key -> group_number
+    # 匹配 "分户为户主X" 或 "分户为户X的下面"
+    split_groups = {}  # group_number -> [person_key, ...]
+    person_reasons = {}  # person_key -> {group_number: reason}
     for row in section2:
         reason = row.get("_reason", "")
-        if "分户为户主" in reason:
-            m = re.search(r"分户为户主(\d+)", reason)
-            gn = int(m.group(1)) if m else 1
-            split_map[_person_key(row)] = gn
-        elif "分户" in reason and "下面" in reason:
-            m = re.search(r"分户为户主(\d+)", reason)
-            gn = int(m.group(1)) if m else 1
-            split_map[_person_key(row)] = gn
+        if "分户" in reason:
+            m = re.search(r"分户为户(?:主)?(\d+)", reason)
+            if m:
+                gn = int(m.group(1))
+                pk = _person_key(row)
+                split_groups.setdefault(gn, []).append(pk)
+                person_reasons.setdefault(pk, {})[gn] = reason
 
-    # 处理 reason 并按分户分组：group 0 = 原户, 1+ = 分户
+    # 按分户分组：group 0 = 原户, 1+ = 分户
+    # person_to_groups: person_key -> sorted list of group numbers
+    person_to_groups = {}
+    for gn, pks in split_groups.items():
+        for pk in pks:
+            person_to_groups.setdefault(pk, []).append(gn)
+    for pk in person_to_groups:
+        person_to_groups[pk].sort()
+
     groups = {}
     for row in merged:
-        reason = row.pop("_reason", "")
-        if reason and reason != "无":
-            cur = row.get("变动情况", "")
-            row["变动情况"] = (cur + "（" + reason + "）") if cur else reason
         pk = _person_key(row)
-        groups.setdefault(split_map.get(pk, 0), []).append(row)
+        pgs = person_to_groups.get(pk)
+        if pgs is None:
+            # 不属于任何分户，归入原户
+            groups.setdefault(0, []).append(row)
+        else:
+            # 将此人添加到其所属的所有分户组
+            for i, gn in enumerate(pgs):
+                pr = person_reasons.get(pk, {}).get(gn, "")
+                if i == 0:
+                    row["_group_reason"] = pr
+                    groups.setdefault(gn, []).append(row)
+                else:
+                    cp = dict(row)
+                    cp["_group_reason"] = pr
+                    groups.setdefault(gn, []).append(cp)
+
+    # 处理 _reason 和 _group_reason，追加到变动情况
+    for gn, rows in groups.items():
+        for row in rows:
+            reason = row.pop("_reason", "")
+            gr = row.pop("_group_reason", "")
+            effective = gr if gr else reason
+            if effective and effective != "无":
+                cur = row.get("变动情况", "")
+                row["变动情况"] = (cur + "（" + effective + "）") if cur else effective
+
+    # 检查分户组是否缺少人员
+    for gn, pks in split_groups.items():
+        if gn not in groups:
+            groups[gn] = []
+        existing_pks = [_person_key(r) for r in groups[gn]]
+        for pk in pks:
+            if pk not in existing_pks:
+                for row in merged:
+                    if _person_key(row) == pk:
+                        cp = dict(row)
+                        pr = person_reasons.get(pk, {}).get(gn, "")
+                        if pr and pr != "无":
+                            cur = cp.get("变动情况", "")
+                            cp["变动情况"] = (cur + "（" + pr + "）") if cur else pr
+                        groups[gn].append(cp)
+                        break
+
+    if not groups:
+        groups[0] = []
 
     result = []
     for gn in sorted(groups.keys()):
@@ -254,7 +303,7 @@ def parse_biao1(filepath, group_name):
             result.append((info, groups[gn]))
         else:
             gi = dict(info)
-            gi["承包方编码"] = "%s-%d" % (info["承包方编码"], gn)
+            gi["_split_group"] = gn
             for r in groups[gn]:
                 if r.get("与承包方代表关系", "").strip() == "本人":
                     gi["承包方代表"] = r["家庭成员姓名"]
@@ -395,10 +444,26 @@ def scan_folder(folder_path):
     xlsx_files.sort(key=lambda x: x[0])
     total = len(xlsx_files)
 
+    # 预扫描：收集所有已有编码，用于分户时分配新编码
+    all_codes = set()
+    for fp, _ in xlsx_files:
+        try:
+            fn = os.path.basename(fp)
+            code = fn.split("-")[0] if "-" in fn else ""
+            if code.isdigit():
+                all_codes.add(int(code))
+        except Exception:
+            pass
+    next_code = max(all_codes) + 1 if all_codes else 1
+
     for idx, (fp, group) in enumerate(xlsx_files):
         try:
             groups = parse_biao1(fp, group)
             for info, rows in groups:
+                # 分户：分配全村最大号+1
+                if "_split_group" in info:
+                    info["承包方编码"] = str(next_code)
+                    next_code += 1
                 # 户内人口 = 总人数 - 减少人数
                 reduce_count = sum(1 for r in rows if "减少" in r.get("变动情况", ""))
                 population = len(rows) - reduce_count
@@ -410,7 +475,6 @@ def scan_folder(folder_path):
         except Exception as e:
             errors.append("%s: %s" % (os.path.basename(fp), str(e)))
         yield idx + 1, total, results, errors
-
 
 def scan_folder_b2(folder_path):
     results = []
