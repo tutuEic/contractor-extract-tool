@@ -205,14 +205,19 @@ def parse_biao1(filepath, group_name):
             id_new = row.get("身份证号", "")
             if id_new and id_new != "/" and (not id_old or id_old == "/"):
                 section1[idx]["身份证号"] = id_new
+            # 变动区姓名与确权区不同时（如错别字纠正），用变动区的值
+            new_name = row.get("家庭成员姓名", "").strip()
+            old_name = section1[idx].get("家庭成员姓名", "").strip()
+            if new_name and new_name != old_name:
+                section1[idx]["家庭成员姓名"] = new_name
             new_rel = row.get("与承包方代表关系", "").strip()
             if new_rel:
                 section1[idx]["与承包方代表关系"] = new_rel
                 if new_rel == "本人":
                     # 新户主出现，在变动情况后备注
-                    new_name = row["家庭成员姓名"]
-                    if old_head and new_name != old_head:
-                        note = "更换户主：%s（原：%s）" % (new_name, old_head)
+                    head_new = row["家庭成员姓名"]
+                    if old_head and head_new != old_head:
+                        note = "更换户主：%s（原：%s）" % (head_new, old_head)
                         cur_chg = section1[idx].get("变动情况", "")
                         section1[idx]["变动情况"] = (cur_chg + "（" + note + "）") if cur_chg else note
         else:
