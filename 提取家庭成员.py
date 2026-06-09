@@ -314,6 +314,7 @@ def parse_biao1(filepath, group_name):
         else:
             gi = dict(info)
             gi["_split_group"] = gn
+            gi["_split_source"] = info.get("编号", "")
             for r in groups[gn]:
                 if r.get("与承包方代表关系", "").strip() == "本人":
                     gi["承包方代表"] = r["家庭成员姓名"]
@@ -536,7 +537,10 @@ def scan_folder(folder_path):
                 this_file_code = info.get("编号", "")
                 parent_code = ""
                 merge_source = ""
-                if "_split_group" not in info:
+                # 工具分户：直接使用 _split_source
+                if "_split_group" in info:
+                    parent_code = info.get("_split_source", "")
+                elif "_split_group" not in info:
                     # 分户检测：确权成员在其他文件中被减少
                     for row in rows:
                         if "减少" not in row.get("变动情况", ""):
