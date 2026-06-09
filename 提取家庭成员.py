@@ -609,7 +609,7 @@ class App(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("承包方家庭成员 & 承包地块提取工具 v0.2.1")
+        self.title("承包方家庭成员 & 承包地块提取工具 v0.3.0")
         self.geometry("1200x650")
         self.minsize(900, 500)
         self.results_b1 = []
