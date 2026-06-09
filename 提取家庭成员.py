@@ -20,7 +20,7 @@ from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 
 OUTPUT_COLUMNS = (
     "所属组", "承包方编码", "承包方代表",
-    "发包方名称", "户内序号",
+    "发包方名称", "户内人口",
     "家庭成员姓名", "性别", "身份证号",
     "与承包方代表关系", "变动情况",
 )
@@ -354,9 +354,12 @@ def scan_folder(folder_path):
     for idx, (fp, group) in enumerate(xlsx_files):
         try:
             info, rows = parse_biao1(fp, group)
-            for seq, row in enumerate(rows, 1):
+            # 户内人口 = 总人数 - 减少人数
+            reduce_count = sum(1 for r in rows if "减少" in r.get("变动情况", ""))
+            population = len(rows) - reduce_count
+            for row in rows:
                 merged = {**info, **row}
-                merged["户内序号"] = seq
+                merged["户内人口"] = population
                 c = tuple(merged.get(col, "") for col in OUTPUT_COLUMNS)
                 results.append({"values": c, "key": _household_key(c)})
         except Exception as e:
@@ -475,7 +478,7 @@ class App(tk.Tk):
     def _setup_tree(self, tree, columns):
         col_widths = {
             "所属组": 60, "承包方编码": 200, "承包方代表": 90,
-            "发包方名称": 160, "户内序号": 50,
+            "发包方名称": 160, "户内人口": 50,
             "家庭成员姓名": 90, "性别": 50, "身份证号": 180,
             "与承包方代表关系": 120, "变动情况": 70,
             "联系方式": 110, "确权总面积(亩)": 90,
