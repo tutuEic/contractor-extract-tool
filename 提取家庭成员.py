@@ -23,7 +23,7 @@ OUTPUT_COLUMNS = (
     "发包方名称", "户内人口",
     "家庭成员姓名", "性别", "身份证号",
     "与承包方代表关系", "变动情况",
-    "调查记事(附记)",
+    "分户来源", "调查记事(附记)",
 )
 
 OUTPUT_COLUMNS_B2 = (
@@ -33,6 +33,7 @@ OUTPUT_COLUMNS_B2 = (
     "地块名称", "地块编码", "地块面积(亩)",
     "东至", "西至", "南至", "北至",
     "变动情况", "变动面积(亩)", "变动原因",
+    "分户来源",
     "变动后东至", "变动后西至", "变动后南至", "变动后北至",
 )
 
@@ -126,10 +127,10 @@ def _read_section_data(ws, header_row, end_row=None, include_change_col=False):
 
 
 def _person_key(row):
-    id_num = row.get("身份证号", "")
-    if id_num and id_num != "/":
+    id_num = row.get("身份证号", "").strip()
+    if id_num and id_num != "/" and id_num != "／":
         return ("id", id_num)
-    return ("name", row.get("家庭成员姓名", ""))
+    return ("name", row.get("家庭成员姓名", "").strip())
 
 
 def _should_remove(row):
@@ -183,8 +184,10 @@ def parse_biao1(filepath, group_name):
     wb.close()
 
     s1_key_idx = {}
+    s1_name_idx = {}  # name -> index (all entries, for name fallback)
     for i, row in enumerate(section1):
         s1_key_idx[_person_key(row)] = i
+        s1_name_idx[row.get("家庭成员姓名", "").strip()] = i
 
     # 记录确权区的老户主（关系为"本人"的人）
     old_head = ""
@@ -196,8 +199,16 @@ def parse_biao1(filepath, group_name):
     s2_only = []
     for row in section2:
         pk = _person_key(row)
-        if pk in s1_key_idx:
-            idx = s1_key_idx[pk]
+        # 优先用 person_key 匹配
+        idx = s1_key_idx.get(pk)
+        # 备用：变动区无 ID 时，按姓名匹配确权区的无 ID 人员
+        if idx is None:
+            id_new = row.get("身份证号", "").strip()
+            if not id_new or id_new in ("/", "／"):
+                name = row.get("家庭成员姓名", "").strip()
+                if name in s1_name_idx:
+                    idx = s1_name_idx[name]
+        if idx is not None:
             section1[idx]["变动情况"] = row["变动情况"]
             section1[idx]["_reason"] = row.get("_reason", "")
             # 确权区身份证号为空或"/"时，用变动区的值同步
@@ -456,6 +467,27 @@ def scan_folder(folder_path):
             pass
     next_code = max(all_codes) + 1 if all_codes else 1
 
+    # 第一遍：收集所有确权人员，用于跨文件分户匹配
+    confirmed_people = {}  # person_key -> set of file_codes
+    name_to_pks = {}  # name -> [person_key, ...] for name-based fallback
+    for fp, _ in xlsx_files:
+        try:
+            fn = os.path.basename(fp)
+            file_code = fn.split("-")[0] if "-" in fn else ""
+            groups = parse_biao1(fp, "_")
+            for info, rows in groups:
+                for row in rows:
+                    if "减少" not in row.get("变动情况", ""):
+                        pk = _person_key(row)
+                        confirmed_people.setdefault(pk, set()).add(file_code)
+                        name = row.get("家庭成员姓名", "").strip()
+                        if name:
+                            pks = name_to_pks.setdefault(name, [])
+                            if pk not in pks:
+                                pks.append(pk)
+        except Exception:
+            pass
+
     for idx, (fp, group) in enumerate(xlsx_files):
         try:
             groups = parse_biao1(fp, group)
@@ -470,6 +502,19 @@ def scan_folder(folder_path):
                 for row in rows:
                     merged = {**info, **row}
                     merged["户内人口"] = population
+                    # 跨文件分户来源匹配
+                    if "减少" in merged.get("变动情况", "") and "分户" in merged.get("变动情况", ""):
+                        pk = _person_key(row)
+                        src_codes = confirmed_people.get(pk, set())
+                        # 备用：当 person_key 不匹配时（如变动区无 ID），按姓名查找
+                        if not src_codes:
+                            name = row.get("家庭成员姓名", "").strip()
+                            for cpk in name_to_pks.get(name, []):
+                                if cpk in confirmed_people:
+                                    src_codes = src_codes | confirmed_people[cpk]
+                        other_codes = sorted(c for c in src_codes if c != merged.get("编号", ""))
+                        if other_codes:
+                            merged["分户来源"] = ",".join(other_codes)
                     c = tuple(merged.get(col, "") for col in OUTPUT_COLUMNS)
                     results.append({"values": c, "key": _household_key(c)})
         except Exception as e:
@@ -688,7 +733,7 @@ class App(tk.Tk):
 
     # b2 household info columns that should only show once per group
     _B2_HOUSEHOLD_COLS = frozenset(range(6))  # cols 0-5: 所属组, 承包方编码, 承包方代表, 联系方式, 确权总面积, 地块总数
-    _B1_HOUSEHOLD_COLS = frozenset({4, 10})  # cols: 户内人口, 调查记事(附记)
+    _B1_HOUSEHOLD_COLS = frozenset({4, 11})  # cols: 户内人口, 调查记事(附记)
 
     def _fill_tree(self, tree, results, columns, is_b2=False):
         tree.delete(*tree.get_children())
