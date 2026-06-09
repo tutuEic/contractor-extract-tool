@@ -225,15 +225,42 @@ def parse_biao1(filepath, group_name):
 
     merged = section1 + s2_only
 
-    filtered = []
+    # 解析分户：从变动原因中提取分户信息
+    split_map = {}  # person_key -> group_number
+    for row in section2:
+        reason = row.get("_reason", "")
+        if "分户为户主" in reason:
+            m = re.search(r"分户为户主(\d+)", reason)
+            gn = int(m.group(1)) if m else 1
+            split_map[_person_key(row)] = gn
+        elif "分户" in reason and "下面" in reason:
+            m = re.search(r"分户为户主(\d+)", reason)
+            gn = int(m.group(1)) if m else 1
+            split_map[_person_key(row)] = gn
+
+    # 处理 reason 并按分户分组：group 0 = 原户, 1+ = 分户
+    groups = {}
     for row in merged:
         reason = row.pop("_reason", "")
-        # 减少的记录不再删除，将原因附在变动情况后面
         if reason and reason != "无":
             cur = row.get("变动情况", "")
             row["变动情况"] = (cur + "（" + reason + "）") if cur else reason
-        filtered.append(row)
-    return info, filtered
+        pk = _person_key(row)
+        groups.setdefault(split_map.get(pk, 0), []).append(row)
+
+    result = []
+    for gn in sorted(groups.keys()):
+        if gn == 0:
+            result.append((info, groups[gn]))
+        else:
+            gi = dict(info)
+            gi["承包方编码"] = "%s-%d" % (info["承包方编码"], gn)
+            for r in groups[gn]:
+                if r.get("与承包方代表关系", "").strip() == "本人":
+                    gi["承包方代表"] = r["家庭成员姓名"]
+                    break
+            result.append((gi, groups[gn]))
+    return result
 
 
 # ── 表2 解析 ──────────────────────────────────────────────────────────────────
@@ -370,15 +397,16 @@ def scan_folder(folder_path):
 
     for idx, (fp, group) in enumerate(xlsx_files):
         try:
-            info, rows = parse_biao1(fp, group)
-            # 户内人口 = 总人数 - 减少人数
-            reduce_count = sum(1 for r in rows if "减少" in r.get("变动情况", ""))
-            population = len(rows) - reduce_count
-            for row in rows:
-                merged = {**info, **row}
-                merged["户内人口"] = population
-                c = tuple(merged.get(col, "") for col in OUTPUT_COLUMNS)
-                results.append({"values": c, "key": _household_key(c)})
+            groups = parse_biao1(fp, group)
+            for info, rows in groups:
+                # 户内人口 = 总人数 - 减少人数
+                reduce_count = sum(1 for r in rows if "减少" in r.get("变动情况", ""))
+                population = len(rows) - reduce_count
+                for row in rows:
+                    merged = {**info, **row}
+                    merged["户内人口"] = population
+                    c = tuple(merged.get(col, "") for col in OUTPUT_COLUMNS)
+                    results.append({"values": c, "key": _household_key(c)})
         except Exception as e:
             errors.append("%s: %s" % (os.path.basename(fp), str(e)))
         yield idx + 1, total, results, errors
