@@ -23,7 +23,7 @@ OUTPUT_COLUMNS = (
     "发包方名称", "户内人口",
     "家庭成员姓名", "性别", "身份证号",
     "与承包方代表关系", "变动情况",
-    "分户来源", "调查记事(附记)",
+    "分、合户来源", "调查记事(附记)",
 )
 
 OUTPUT_COLUMNS_B2 = (
@@ -33,7 +33,7 @@ OUTPUT_COLUMNS_B2 = (
     "地块名称", "地块编码", "地块面积(亩)",
     "东至", "西至", "南至", "北至",
     "变动情况", "变动面积(亩)", "变动原因",
-    "分户来源",
+    "分、合户来源",
     "变动后东至", "变动后西至", "变动后南至", "变动后北至",
 )
 
@@ -539,7 +539,7 @@ def scan_folder(folder_path):
                     merged["户内人口"] = population
                     code = parent_code or merge_source
                     if (not "减少" in row.get("变动情况", "")) and code:
-                        merged["分户来源"] = code
+                        merged["分、合户来源"] = code
                     c = tuple(merged.get(col, "") for col in OUTPUT_COLUMNS)
                     results.append({"values": c, "key": _household_key(c)})
         except Exception as e:
