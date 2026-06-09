@@ -500,10 +500,12 @@ def scan_folder(folder_path):
                     next_code += 1
                 reduce_count = sum(1 for r in rows if "减少" in r.get("变动情况", ""))
                 population = len(rows) - reduce_count
-                # 查找此户的父户文件编码
+                # 查找此户的父户编码（分户）或合户来源
                 this_file_code = info.get("编号", "")
                 parent_code = ""
+                merge_source = ""
                 if "_split_group" not in info:
+                    # 分户检测：确权成员在其他文件中被减少
                     for row in rows:
                         if "减少" not in row.get("变动情况", ""):
                             pk = _person_key(row)
@@ -517,11 +519,27 @@ def scan_folder(folder_path):
                             if parents:
                                 parent_code = parents[0]
                                 break
+                    # 合户检测：变动区“增加”人员在其他文件中是确权成员
+                    if not parent_code:
+                        for row in rows:
+                            if "增加" in row.get("变动情况", ""):
+                                pk = _person_key(row)
+                                sources = confirmed_people.get(pk, set())
+                                if not sources:
+                                    name = row.get("家庭成员姓名", "").strip()
+                                    for cpk in name_to_pks.get(name, []):
+                                        if cpk in confirmed_people:
+                                            sources = sources | confirmed_people[cpk]
+                                sources = sorted(c for c in sources if c != this_file_code)
+                                if sources:
+                                    merge_source = sources[0]
+                                    break
                 for row in rows:
                     merged = {**info, **row}
                     merged["户内人口"] = population
-                    if (not "减少" in row.get("变动情况", "")) and parent_code:
-                        merged["分户来源"] = parent_code
+                    code = parent_code or merge_source
+                    if (not "减少" in row.get("变动情况", "")) and code:
+                        merged["分户来源"] = code
                     c = tuple(merged.get(col, "") for col in OUTPUT_COLUMNS)
                     results.append({"values": c, "key": _household_key(c)})
         except Exception as e:
