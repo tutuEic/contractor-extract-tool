@@ -21,7 +21,7 @@ from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 OUTPUT_COLUMNS = (
     "所属组", "承包方编码", "承包方代表",
     "联系电话", "发包方名称", "户内人口",
-    "家庭成员姓名", "性别", "身份证号", "性别、身份证长度核对",
+    "家庭成员姓名", "性别", "身份证号", "身份证+性别核对",
     "与承包方代表关系", "变动情况",
     "分、合户来源", "调查记事(附记)",
 )
@@ -45,13 +45,25 @@ _FILL_B = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid
 _SEP_FILL = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
 _ERR_FILL = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
 
+# 身份证校验码权重和映射
+_ID_WEIGHTS = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
+_ID_CHECK_CODES = "10X98765432"
+
+
+def _validate_id_checksum(id_number):
+    """校验18位身份证号的第18位校验码，返回 True/False。"""
+    if len(id_number) != 18 or not id_number[:17].isdigit():
+        return False
+    s = sum(int(id_number[i]) * _ID_WEIGHTS[i] for i in range(17))
+    return id_number[17].upper() == _ID_CHECK_CODES[s % 11]
+
 # 关系 → 预期性别（本人/配偶无法推断，不在此表）
 _REL_MALE = frozenset(("孙子", "儿子", "父亲", "丈夫", "兄", "弟", "侄子", "外甥"))
 _REL_FEMALE = frozenset(("孙女", "女儿", "母亲", "妻子", "姐", "妹", "侄女", "外甥女"))
 
 
 def _check_gender(id_number, gender_text, relationship):
-    """核对性别 + 身份证长度。返回 '正确'/'错误'/''。"""
+    """核对性别 + 身份证长度 + 校验码。返回 '正确'/'错误'/''。"""
     id_number = str(id_number or "").strip()
     gender_text = str(gender_text or "").strip()
     relationship = str(relationship or "").strip()
@@ -65,12 +77,16 @@ def _check_gender(id_number, gender_text, relationship):
     if has_id and len(id_number) != 18:
         return "错误"
 
-    # ② 身份证性别核对
+    # ② 身份证校验码校验
+    if has_id and not _validate_id_checksum(id_number):
+        return "错误"
+
+    # ③ 身份证性别核对
     id_gender = ""
-    if has_id and id_number[:-1].isdigit():
+    if has_id and id_number[:17].isdigit():
         id_gender = "男" if int(id_number[-2]) % 2 == 1 else "女"
 
-    # ③ 关系核对（本人/配偶跳过）
+    # ④ 关系核对（本人/配偶跳过）
     rel_gender = ""
     if relationship in _REL_MALE:
         rel_gender = "男"
@@ -623,7 +639,7 @@ def scan_folder(folder_path):
                     code = parent_code or merge_source
                     if (not "减少" in row.get("变动情况", "")) and code:
                         merged["分、合户来源"] = code
-                    merged["性别、身份证长度核对"] = _check_gender(
+                    merged["身份证+性别核对"] = _check_gender(
                         merged.get("身份证号"), merged.get("性别"), merged.get("与承包方代表关系"))
                     c = tuple(merged.get(col, "") for col in OUTPUT_COLUMNS)
                     results.append({"values": c, "key": _household_key(c)})
@@ -742,7 +758,7 @@ class App(tk.Tk):
         col_widths = {
             "所属组": 60, "承包方编码": 200, "承包合同编号": 200, "承包方代表": 90,
             "发包方名称": 160, "户内人口": 50,
-            "家庭成员姓名": 90, "性别": 50, "身份证号": 180, "性别、身份证长度核对": 60,
+            "家庭成员姓名": 90, "性别": 50, "身份证号": 180, "身份证+性别核对": 60,
             "联系电话": 120,
             "与承包方代表关系": 120, "变动情况": 70,
             "调查记事(附记)": 200,
