@@ -20,8 +20,8 @@ from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 
 OUTPUT_COLUMNS = (
     "所属组", "承包方编码", "承包方代表",
-    "发包方名称", "户内人口",
-    "家庭成员姓名", "性别", "身份证号",
+    "联系电话", "发包方名称", "户内人口",
+    "家庭成员姓名", "性别", "身份证号", "性别、身份证长度核对",
     "与承包方代表关系", "变动情况",
     "分、合户来源", "调查记事(附记)",
 )
@@ -43,6 +43,50 @@ _REDUCE_REMOVE_KEYWORDS = ("嫁", "死", "亡", "去世", "登记错误")
 _FILL_A = PatternFill(start_color="DAEEF3", end_color="DAEEF3", fill_type="solid")
 _FILL_B = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
 _SEP_FILL = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+_ERR_FILL = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
+
+# 关系 → 预期性别（本人/配偶无法推断，不在此表）
+_REL_MALE = frozenset(("孙子", "儿子", "父亲", "丈夫", "兄", "弟", "侄子", "外甥"))
+_REL_FEMALE = frozenset(("孙女", "女儿", "母亲", "妻子", "姐", "妹", "侄女", "外甥女"))
+
+
+def _check_gender(id_number, gender_text, relationship):
+    """核对性别 + 身份证长度。返回 '正确'/'错误'/''。"""
+    id_number = str(id_number or "").strip()
+    gender_text = str(gender_text or "").strip()
+    relationship = str(relationship or "").strip()
+
+    if not gender_text:
+        return ""
+
+    has_id = bool(id_number) and id_number not in ("/", "／")
+
+    # ① 身份证长度校验
+    if has_id and len(id_number) != 18:
+        return "错误"
+
+    # ② 身份证性别核对
+    id_gender = ""
+    if has_id and id_number[:-1].isdigit():
+        id_gender = "男" if int(id_number[-2]) % 2 == 1 else "女"
+
+    # ③ 关系核对（本人/配偶跳过）
+    rel_gender = ""
+    if relationship in _REL_MALE:
+        rel_gender = "男"
+    elif relationship in _REL_FEMALE:
+        rel_gender = "女"
+
+    # 两项都不确定 → 留空
+    if not id_gender and not rel_gender:
+        return ""
+
+    # 任一项与表中性别不符 → 错误
+    if id_gender and id_gender != gender_text:
+        return "错误"
+    if rel_gender and rel_gender != gender_text:
+        return "错误"
+    return "正确"
 
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
@@ -148,6 +192,7 @@ def parse_biao1(filepath, group_name):
     file_code, file_name = _parse_filename(fn)
 
     contractor = str(ws.cell(4, 5).value or file_name or "").strip()
+    phone = str(ws.cell(4, 10).value or "").strip()
     fa_bao_fang = str(ws.cell(3, 1).value or "").strip()
     fa_bao_fang = fa_bao_fang.replace("发包方名称：", "")
     fa_bao_fang = fa_bao_fang.replace("发包方名称:", "").strip()
@@ -161,6 +206,7 @@ def parse_biao1(filepath, group_name):
         "编号": file_code or "",
         "承包方编码": contractor_code,
         "承包方代表": contractor,
+        "联系电话": phone,
         "发包方名称": fa_bao_fang,
     }
 
@@ -169,16 +215,19 @@ def parse_biao1(filepath, group_name):
 
     section1 = _read_section_data(ws, h1, end_row=h2, include_change_col=False) if h1 else []
     section2 = _read_section_data(ws, h2, include_change_col=True) if h2 else []
-    # 提取调查记事(附记)：取确权区和变动区第一行数据的第14列
+    # 提取调查记事(附记)：扫描确权区和变动区所有行的第14列
     jishi_parts = []
-    if h1 and h1 + 1 <= ws.max_row:
-        v = str(ws.cell(h1 + 1, 14).value or "").strip()
-        if v and "记事" not in v:
-            jishi_parts.append(v)
-    if h2 and h2 + 1 <= ws.max_row:
-        v = str(ws.cell(h2 + 1, 14).value or "").strip()
-        if v and "记事" not in v and v not in jishi_parts:
-            jishi_parts.append(v)
+    if h1:
+        end1 = (h2 - 1) if h2 else ws.max_row
+        for r in range(h1 + 1, end1 + 1):
+            v = str(ws.cell(r, 14).value or "").strip()
+            if v and "记事" not in v and v not in jishi_parts:
+                jishi_parts.append(v)
+    if h2:
+        for r in range(h2 + 1, ws.max_row + 1):
+            v = str(ws.cell(r, 14).value or "").strip()
+            if v and "记事" not in v and v not in jishi_parts:
+                jishi_parts.append(v)
     info["调查记事(附记)"] = "；".join(jishi_parts)
     wb.close()
 
@@ -200,13 +249,11 @@ def parse_biao1(filepath, group_name):
         pk = _person_key(row)
         # 优先用 person_key 匹配
         idx = s1_key_idx.get(pk)
-        # 备用：变动区无 ID 时，按姓名匹配确权区的无 ID 人员
+        # 备用：person_key 未命中时，按姓名匹配（覆盖变动区补录身份证号的场景）
         if idx is None:
-            id_new = row.get("身份证号", "").strip()
-            if not id_new or id_new in ("/", "／"):
-                name = row.get("家庭成员姓名", "").strip()
-                if name in s1_name_idx:
-                    idx = s1_name_idx[name]
+            name = row.get("家庭成员姓名", "").strip()
+            if name in s1_name_idx:
+                idx = s1_name_idx[name]
         if idx is not None:
             section1[idx]["变动情况"] = row["变动情况"]
             section1[idx]["_reason"] = row.get("_reason", "")
@@ -576,6 +623,8 @@ def scan_folder(folder_path):
                     code = parent_code or merge_source
                     if (not "减少" in row.get("变动情况", "")) and code:
                         merged["分、合户来源"] = code
+                    merged["性别、身份证长度核对"] = _check_gender(
+                        merged.get("身份证号"), merged.get("性别"), merged.get("与承包方代表关系"))
                     c = tuple(merged.get(col, "") for col in OUTPUT_COLUMNS)
                     results.append({"values": c, "key": _household_key(c)})
         except Exception as e:
@@ -613,7 +662,7 @@ class App(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("承包方家庭成员 & 承包地块提取工具 v0.3.0")
+        self.title("承包方家庭成员 & 承包地块提取工具 v0.3.2")
         self.geometry("1200x650")
         self.minsize(900, 500)
         self.results_b1 = []
@@ -693,7 +742,8 @@ class App(tk.Tk):
         col_widths = {
             "所属组": 60, "承包方编码": 200, "承包合同编号": 200, "承包方代表": 90,
             "发包方名称": 160, "户内人口": 50,
-            "家庭成员姓名": 90, "性别": 50, "身份证号": 180,
+            "家庭成员姓名": 90, "性别": 50, "身份证号": 180, "性别、身份证长度核对": 60,
+            "联系电话": 120,
             "与承包方代表关系": 120, "变动情况": 70,
             "调查记事(附记)": 200,
             "联系方式": 110, "确权总面积(亩)": 90,
@@ -792,7 +842,7 @@ class App(tk.Tk):
 
     # b2 household info columns that should only show once per group
     _B2_HOUSEHOLD_COLS = frozenset(range(7))  # cols 0-5: 所属组, 承包方编码, 承包方代表, 联系方式, 确权总面积, 地块总数
-    _B1_HOUSEHOLD_COLS = frozenset({4, 11})  # cols: 户内人口, 调查记事(附记)
+    _B1_HOUSEHOLD_COLS = frozenset({5, 13})  # cols: 户内人口, 调查记事(附记)
 
     def _fill_tree(self, tree, results, columns, is_b2=False):
         tree.delete(*tree.get_children())
@@ -867,7 +917,7 @@ class App(tk.Tk):
                 for ci in range(6):
                     vals[ci] = ""
             if (not is_b2) and prev_key == cur_key:
-                for ci in (4, 10):  # 户内人口, 调查记事
+                for ci in (5, 13):  # 户内人口, 调查记事
                     vals[ci] = ""
             if prev_key is not None and cur_key != prev_key:
                 parity = 1 - parity
@@ -880,8 +930,12 @@ class App(tk.Tk):
             fill = _FILL_A if parity == 0 else _FILL_B
             for ci, val in enumerate(vals, 1):
                 cell = ws.cell(cur_row, ci, val)
-                cell.fill = fill
-                if ci <= 7:
+                if ci == 10 and val == "错误":
+                    cell.fill = _ERR_FILL
+                    cell.font = Font(color="FFFFFF", bold=True)
+                else:
+                    cell.fill = fill
+                if ci <= 8 or ci == 10:
                     cell.alignment = center_align
             prev_key = cur_key
             cur_row += 1
@@ -902,3 +956,4 @@ class App(tk.Tk):
 if __name__ == "__main__":
     app = App()
     app.mainloop()
+
