@@ -278,6 +278,10 @@ def parse_biao1(filepath, group_name):
             id_new = row.get("身份证号", "")
             if id_new and id_new != "/" and (not id_old or id_old == "/"):
                 section1[idx]["身份证号"] = id_new
+                # 同步性别（变动区有真实身份证号时，性别更可靠）
+                new_gender = row.get("性别", "").strip()
+                if new_gender:
+                    section1[idx]["性别"] = new_gender
             # 变动区姓名与确权区不同时（如错别字纠正），用变动区的值
             new_name = row.get("家庭成员姓名", "").strip()
             old_name = section1[idx].get("家庭成员姓名", "").strip()
@@ -678,7 +682,7 @@ class App(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("承包方家庭成员 & 承包地块提取工具 v0.3.3")
+        self.title("承包方家庭成员 & 承包地块提取工具 v0.3.4")
         self.geometry("1200x650")
         self.minsize(900, 500)
         self.results_b1 = []
