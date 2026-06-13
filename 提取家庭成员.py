@@ -33,7 +33,7 @@ OUTPUT_COLUMNS_B2 = (
     "地块名称", "地块编码", "地块面积(亩)",
     "东至", "西至", "南至", "北至",
     "变动情况", "变动面积(亩)", "变动原因",
-    "分、合户来源",
+    "分、合户来源", "调查记事",
 )
 
 _HOUSEHOLD_KEY_COLS = (0, 1)
@@ -546,6 +546,16 @@ def parse_biao2(filepath, group_name):
     h1 = _find_section_header(ws, "确权")
     h2 = _find_section_header(ws, "变动")
 
+    # 读取调查记事(确权区C13列，跳过表头行)
+    jishi_parts = []
+    if h1:
+        end_j = (h2 - 1) if h2 else ws.max_row
+        for r in range(h1 + 1, end_j + 1):
+            v = str(ws.cell(r, 13).value or "").strip()
+            if v and "记事" not in v and v not in jishi_parts:
+                jishi_parts.append(v)
+    info["调查记事"] = "；".join(jishi_parts)
+
     # Read confirmed plots
     plots = []
     if h1:
@@ -896,6 +906,7 @@ class App(tk.Tk):
             "地块面积(亩)": 90,
             "东至": 150, "西至": 150, "南至": 150, "北至": 150,
             "变动面积(亩)": 90, "变动原因": 180,
+            "调查记事": 200,
         }
         for i, name in enumerate(columns):
             tree.heading(i, text=name)
