@@ -212,14 +212,25 @@ def _parse_filename(filename):
 
 def _parse_filename2(filename):
     fn = _normalize_biao_suffix(filename)
+    # 从原始文件名提取分户信息（归一化会去掉）
+    fenhuyi = ""
+    m_fh = re.search(r'[（(](分户[^)]*)[）)]', filename)
+    if m_fh:
+        fenhuyi = m_fh.group(1).strip()
     # 先匹配 编号-姓名-表2.xlsx
     m = re.match(r"^(.+?)-(.+?)-表2\.xlsx$", fn)
     if m:
-        return m.group(1), m.group(2)
+        code, name = m.group(1), m.group(2)
+        if fenhuyi:
+            name = f"{name}（{fenhuyi}）"
+        return code, name
     # 再匹配 编号-姓名表2.xlsx（只有一个横线）
     m = re.match(r"^(.+?)-(.+?)表2\.xlsx$", fn)
     if m:
-        return m.group(1), m.group(2)
+        code, name = m.group(1), m.group(2)
+        if fenhuyi:
+            name = f"{name}（{fenhuyi}）"
+        return code, name
     # 无横线时整体作为编号
     base = fn.replace("表2.xlsx", "")
     return base.rstrip("-"), ""
@@ -541,6 +552,17 @@ def parse_biao2(filepath, group_name):
     phone = str(ws.cell(4, 6).value or "").strip()
     total_area = str(ws.cell(4, 10).value or "").strip()
     total_plots = str(ws.cell(4, 14).value or "").strip()
+
+    # 分户文件表头布局不同，读到的是表头文本而非数据 → 回退到文件名
+    _header_kw = ("承包方", "基础信息", "代表关系", "□有", "☑无", "□是", "☑是", "成员总数", "序号", "姓名", "性别", "身份证", "备注", "变化")
+    if any(kw in contractor for kw in _header_kw):
+        contractor = file_name or ""
+    if any(kw in phone for kw in _header_kw):
+        phone = ""
+    if any(kw in total_area for kw in _header_kw):
+        total_area = ""
+    if any(kw in total_plots for kw in _header_kw):
+        total_plots = ""
 
     # 承包方编码：从文件名前缀提取
     contractor_code = file_code or ""
