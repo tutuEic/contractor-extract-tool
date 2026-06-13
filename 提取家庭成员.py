@@ -170,13 +170,13 @@ def _check_gender(id_number, gender_text, relationship):
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
 
 def _is_biao1(filename):
-    """判断是否为表1文件，兼容 表1.xlsx / 表1（1）.xlsx / 表1(1).xlsx / 表1 副本.xlsx 等"""
-    return bool(re.search(r'表1[^\\]*\.xlsx$', filename)) and not filename.startswith("~$")
+    """判断是否为表1文件，兼容 表1.xlsx / 表1（1）.xlsx / 表1--总(分户).xlsx 等"""
+    return bool(re.search(r'-表1[^\\]*\.xlsx$', filename)) and not filename.startswith("~$")
 
 
 def _is_biao2(filename):
     """判断是否为表2文件，兼容 表2.xlsx / 表2（1）.xlsx 等"""
-    return bool(re.search(r'表2[^\\]*\.xlsx$', filename)) and not filename.startswith("~$")
+    return bool(re.search(r'-表2[^\\]*\.xlsx$', filename)) and not filename.startswith("~$")
 
 
 def _normalize_biao_suffix(filename):
