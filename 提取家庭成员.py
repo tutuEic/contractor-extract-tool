@@ -327,6 +327,10 @@ def parse_biao1(filepath, group_name):
 
     # 提取承包方编码：确权承包合同编号去掉末尾字母
     contract_no = str(ws.cell(5, 9).value or "").strip()
+    # 分户文件R5C9是表头文本，不是合同编号
+    _header_kw2 = ("承包方", "代表关系", "基础信息", "□有", "☑无", "序号", "成员", "姓名", "性别", "身份证", "备注", "变化")
+    if any(kw in contract_no for kw in _header_kw2):
+        contract_no = ""
     contractor_code = contract_no.rstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") if contract_no else (file_code or "")
 
     info = {
