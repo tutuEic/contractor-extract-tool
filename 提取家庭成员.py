@@ -263,9 +263,18 @@ def _read_section_data(ws, header_row, end_row=None, include_change_col=False):
         # 确权区必须有序号；变动区允许无序号的"子行"（续行）
         if not include_change_col and not _is_seq_number(seq):
             continue
+        # 跳过分户区表头行（含有"承包方""代表关系""基础信息"等关键词）
+        name_str = str(name).strip()
+        if any(kw in name_str for kw in ("承包方", "代表关系", "基础信息", "成员总数")):
+            continue
+        # 跳过性别列明显不是性别值的行（如"□有""☑无"等）
+        gender_val = str(ws.cell(r, 6).value or "").strip()
+        if gender_val and gender_val not in ("男", "女", ""):
+            if "□" in gender_val or "☑" in gender_val or "有" in gender_val or "无" in gender_val:
+                continue
         row_data = {
-            "家庭成员姓名": str(name).strip(),
-            "性别": str(ws.cell(r, 6).value or "").strip(),
+            "家庭成员姓名": name_str,
+            "性别": gender_val,
             "身份证号": str(ws.cell(r, 7).value or "").strip(),
             "与承包方代表关系": str(ws.cell(r, 9).value or "").strip(),
             "变动情况": str(ws.cell(r, 3).value or "").strip() if include_change_col else "",
