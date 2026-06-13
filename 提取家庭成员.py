@@ -1,6 +1,6 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
-承包方家庭成员 & 承包地块信息提取工具
+承包方家庭成员 & 承包地块信息提取工具 v0.3.5
 从 D:\农经全延保 下所有表1/表2 xlsx 文件中提取信息，汇总到一张表。
 表1：同一户中同一人如在确权区和变动区都出现，合并为一条记录。减少的人口自动删除。
 表2：提取地块确权登记信息及地块增减变动情况。
@@ -60,6 +60,68 @@ def _validate_id_checksum(id_number):
 # 关系 → 预期性别（本人/配偶无法推断，不在此表）
 _REL_MALE = frozenset(("孙子", "儿子", "父亲", "丈夫", "兄", "弟", "侄子", "外甥"))
 _REL_FEMALE = frozenset(("孙女", "女儿", "母亲", "妻子", "姐", "妹", "侄女", "外甥女"))
+
+# ── 户主变更时的关系转换规则 ─────────────────────────────────────────────────
+# 键: 新户主在确权区的旧关系（相对于老户主）
+# 值: 字典，映射 旧关系→新关系（相对于新户主）
+# 无法准确推算的关系保持不变（如侄子、外甥等）
+_RELATION_TRANSFORMS = {
+    "儿子": {
+        "本人": "父亲",   "妻子": "母亲",   "儿子": "兄弟",
+        "女儿": "姐妹",   "父亲": "祖父",   "母亲": "祖母",
+        "孙子": "儿子",   "孙女": "女儿",
+    },
+    "女儿": {
+        "本人": "父亲",   "妻子": "母亲",   "儿子": "兄弟",
+        "女儿": "姐妹",   "父亲": "祖父",   "母亲": "祖母",
+        "孙子": "儿子",   "孙女": "女儿",
+    },
+    "妻子": {
+        "本人": "丈夫",
+    },
+    "丈夫": {
+        "本人": "妻子",
+    },
+    "孙子": {
+        "本人": "祖父",   "妻子": "祖母",   "儿子": "父亲",
+        "女儿": "母亲",
+    },
+    "孙女": {
+        "本人": "祖父",   "妻子": "祖母",   "儿子": "父亲",
+        "女儿": "母亲",
+    },
+    "父亲": {
+        "本人": "儿子",   "妻子": "儿媳",   "儿子": "兄弟",
+        "女儿": "姐妹",   "父亲": "本人",   "母亲": "母亲",
+    },
+    "母亲": {
+        "本人": "儿子",   "妻子": "儿媳",   "儿子": "兄弟",
+        "女儿": "姐妹",   "父亲": "父亲",   "母亲": "本人",
+    },
+}
+
+
+def _recalculate_relationships(members, old_head, new_head, new_head_old_rel):
+    """当户主变更时，重新计算所有家庭成员与新户主的关系。"""
+    if not new_head_old_rel or new_head_old_rel == "本人":
+        return  # 无需转换
+
+    transform = _RELATION_TRANSFORMS.get(new_head_old_rel)
+    if not transform:
+        return  # 未知转换规则，跳过
+
+    for m in members:
+        name = m.get("家庭成员姓名", "").strip()
+        old_rel = m.get("与承包方代表关系", "").strip()
+
+        if name == new_head:
+            m["与承包方代表关系"] = "本人"
+        elif name == old_head:
+            m["与承包方代表关系"] = transform.get("本人", "父亲")
+        else:
+            new_rel = transform.get(old_rel)
+            if new_rel:
+                m["与承包方代表关系"] = new_rel
 
 
 def _check_gender(id_number, gender_text, relationship):
@@ -261,6 +323,7 @@ def parse_biao1(filepath, group_name):
             break
 
     s2_only = []
+    _new_head_old_rel = ""  # 新户主在确权区的旧关系（更新前保存）
     for row in section2:
         pk = _person_key(row)
         # 优先用 person_key 匹配
@@ -289,6 +352,9 @@ def parse_biao1(filepath, group_name):
                 section1[idx]["家庭成员姓名"] = new_name
             new_rel = row.get("与承包方代表关系", "").strip()
             if new_rel:
+                # 在更新前，记录新户主的旧关系（用于后续重算）
+                if new_rel == "本人":
+                    _new_head_old_rel = section1[idx].get("与承包方代表关系", "").strip()
                 section1[idx]["与承包方代表关系"] = new_rel
                 if new_rel == "本人":
                     # 新户主出现，在变动情况后备注
@@ -299,6 +365,15 @@ def parse_biao1(filepath, group_name):
                         section1[idx]["变动情况"] = (cur_chg + "（" + note + "）") if cur_chg else note
         else:
             s2_only.append(row)
+
+    # ── 户主变更时，重算所有家庭成员与新户主的关系 ──
+    new_head_name = None
+    for row in section1:
+        if row.get("与承包方代表关系", "").strip() == "本人":
+            new_head_name = row.get("家庭成员姓名", "").strip()
+            break
+    if new_head_name and old_head and new_head_name != old_head and _new_head_old_rel:
+        _recalculate_relationships(section1, old_head, new_head_name, _new_head_old_rel)
 
     merged = section1 + s2_only
 
