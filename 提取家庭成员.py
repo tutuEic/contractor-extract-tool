@@ -186,14 +186,25 @@ def _normalize_biao_suffix(filename):
 
 def _parse_filename(filename):
     fn = _normalize_biao_suffix(filename)
+    # 从原始文件名提取分户信息（归一化会去掉）
+    fenhuyi = ""
+    m_fh = re.search(r'[（(](分户[^)]*)[）)]', filename)
+    if m_fh:
+        fenhuyi = m_fh.group(1).strip()
     # 先匹配 编号-姓名-表1.xlsx
     m = re.match(r"^(.+?)-(.+?)-表1\.xlsx$", fn)
     if m:
-        return m.group(1), m.group(2)
+        code, name = m.group(1), m.group(2)
+        if fenhuyi:
+            name = f"{name}（{fenhuyi}）"
+        return code, name
     # 再匹配 编号-姓名表1.xlsx（只有一个横线）
     m = re.match(r"^(.+?)-(.+?)表1\.xlsx$", fn)
     if m:
-        return m.group(1), m.group(2)
+        code, name = m.group(1), m.group(2)
+        if fenhuyi:
+            name = f"{name}（{fenhuyi}）"
+        return code, name
     # 无横线时整体作为编号
     base = fn.replace("表1.xlsx", "")
     return base.rstrip("-"), ""
