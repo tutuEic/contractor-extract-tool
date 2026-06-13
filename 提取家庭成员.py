@@ -230,11 +230,14 @@ def _normalize(text):
 
 
 def _find_section_header(ws, keyword):
+    # 使用更具体的关键词避免误匹配（如"有无确权承包合同"被误认为确权表头）
+    specific = {"确权": "确权登记", "变动": "变动情况"}
+    kw = specific.get(keyword, keyword)
     for r in range(1, ws.max_row + 1):
-        for c in range(1, 6):
-            val = ws.cell(r, c).value
-            if val and keyword in _normalize(val):
-                return r
+        # 只在C1列查找（表头行的标题都在C1）
+        val = ws.cell(r, 1).value
+        if val and kw in _normalize(val):
+            return r
     return None
 
 
