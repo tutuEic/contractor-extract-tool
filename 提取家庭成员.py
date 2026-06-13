@@ -71,12 +71,32 @@ _RELATION_TRANSFORMS = {
         "女儿": "姐妹",   "父亲": "祖父",   "母亲": "祖母",
         "孙子": "儿子",   "孙女": "女儿",
     },
+    # "子" 是 "儿子" 的简写
+    "子": {
+        "本人": "父亲",   "配偶": "母亲",   "妻子": "母亲",
+        "子": "兄弟",     "儿子": "兄弟",   "女": "姐妹",
+        "女儿": "姐妹",   "父亲": "祖父",   "父母": "祖父",
+        "母亲": "祖母",   "祖母": "祖母",
+        "孙子": "儿子",   "孙女": "女儿",
+    },
     "女儿": {
         "本人": "父亲",   "妻子": "母亲",   "儿子": "兄弟",
         "女儿": "姐妹",   "父亲": "祖父",   "母亲": "祖母",
         "孙子": "儿子",   "孙女": "女儿",
     },
+    # "女" 是 "女儿" 的简写
+    "女": {
+        "本人": "父亲",   "配偶": "母亲",   "妻子": "母亲",
+        "子": "兄弟",     "儿子": "兄弟",   "女": "姐妹",
+        "女儿": "姐妹",   "父亲": "祖父",   "父母": "祖父",
+        "母亲": "祖母",   "祖母": "祖母",
+        "孙子": "儿子",   "孙女": "女儿",
+    },
     "妻子": {
+        "本人": "丈夫",
+    },
+    # "配偶" 根据性别判断，此处默认为妻子
+    "配偶": {
         "本人": "丈夫",
     },
     "丈夫": {
@@ -84,11 +104,13 @@ _RELATION_TRANSFORMS = {
     },
     "孙子": {
         "本人": "祖父",   "妻子": "祖母",   "儿子": "父亲",
-        "女儿": "母亲",
+        "女儿": "母亲",   "配偶": "父亲",   "子": "父亲",
+        "女": "母亲",
     },
     "孙女": {
         "本人": "祖父",   "妻子": "祖母",   "儿子": "父亲",
-        "女儿": "母亲",
+        "女儿": "母亲",   "配偶": "父亲",   "子": "父亲",
+        "女": "母亲",
     },
     "父亲": {
         "本人": "儿子",   "妻子": "儿媳",   "儿子": "兄弟",
@@ -232,7 +254,8 @@ def _read_section_data(ws, header_row, end_row=None, include_change_col=False):
         name = ws.cell(r, 4).value
         if not name or str(name).strip() == "":
             continue
-        if not _is_seq_number(seq):
+        # 确权区必须有序号；变动区允许无序号的"子行"（续行）
+        if not include_change_col and not _is_seq_number(seq):
             continue
         row_data = {
             "家庭成员姓名": str(name).strip(),
@@ -352,11 +375,15 @@ def parse_biao1(filepath, group_name):
                 section1[idx]["家庭成员姓名"] = new_name
             new_rel = row.get("与承包方代表关系", "").strip()
             if new_rel:
+                # "户主" 等同于 "本人"，统一为 "本人"
+                is_head = new_rel in ("本人", "户主")
+                if is_head:
+                    new_rel = "本人"
                 # 在更新前，记录新户主的旧关系（用于后续重算）
-                if new_rel == "本人":
+                if is_head:
                     _new_head_old_rel = section1[idx].get("与承包方代表关系", "").strip()
                 section1[idx]["与承包方代表关系"] = new_rel
-                if new_rel == "本人":
+                if is_head:
                     # 新户主出现，在变动情况后备注
                     head_new = row["家庭成员姓名"]
                     if old_head and head_new != old_head:
@@ -367,12 +394,17 @@ def parse_biao1(filepath, group_name):
             s2_only.append(row)
 
     # ── 户主变更时，重算所有家庭成员与新户主的关系 ──
+    # 但如果变动区已有"变更关系"的明确标注，则以变动区为准，不再重算
     new_head_name = None
     for row in section1:
         if row.get("与承包方代表关系", "").strip() == "本人":
             new_head_name = row.get("家庭成员姓名", "").strip()
             break
-    if new_head_name and old_head and new_head_name != old_head and _new_head_old_rel:
+    _has_explicit_changes = any(
+        row.get("_reason", "").strip() == "变更关系" for row in section2
+    )
+    if (new_head_name and old_head and new_head_name != old_head
+            and _new_head_old_rel and not _has_explicit_changes):
         _recalculate_relationships(section1, old_head, new_head_name, _new_head_old_rel)
 
     merged = section1 + s2_only
