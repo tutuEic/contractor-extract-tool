@@ -313,6 +313,15 @@ def parse_biao1(filepath, group_name):
     fa_bao_fang = fa_bao_fang.replace("发包方名称：", "")
     fa_bao_fang = fa_bao_fang.replace("发包方名称:", "").strip()
 
+    # 分户文件表头布局不同，读到的是表头文本而非数据 → 回退到文件名
+    _header_kw = ("承包方", "基础信息", "代表关系", "□有", "☑无", "□是", "☑是", "成员总数")
+    if any(kw in contractor for kw in _header_kw):
+        contractor = file_name or ""
+    if any(kw in fa_bao_fang for kw in _header_kw):
+        fa_bao_fang = ""
+    if any(kw in phone for kw in _header_kw):
+        phone = ""
+
     # 提取承包方编码：确权承包合同编号去掉末尾字母
     contract_no = str(ws.cell(5, 9).value or "").strip()
     contractor_code = contract_no.rstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") if contract_no else (file_code or "")
