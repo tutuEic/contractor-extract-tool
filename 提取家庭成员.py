@@ -191,31 +191,48 @@ def _check_gender(id_number, gender_text, relationship):
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
 
+def _is_biao1(filename):
+    """判断是否为表1文件，兼容 表1.xlsx / 表1（1）.xlsx / 表1(1).xlsx / 表1 副本.xlsx 等"""
+    return bool(re.search(r'表1[^\\]*\.xlsx$', filename)) and not filename.startswith("~$")
+
+
+def _is_biao2(filename):
+    """判断是否为表2文件，兼容 表2.xlsx / 表2（1）.xlsx 等"""
+    return bool(re.search(r'表2[^\\]*\.xlsx$', filename)) and not filename.startswith("~$")
+
+
+def _normalize_biao_suffix(filename):
+    """把 表1（1）.xlsx / 表1 副本.xlsx 等统一为 表1.xlsx，用于解析文件名"""
+    return re.sub(r'(表[12])[^.]*\.xlsx$', r'\1.xlsx', filename)
+
+
 def _parse_filename(filename):
+    fn = _normalize_biao_suffix(filename)
     # 先匹配 编号-姓名-表1.xlsx
-    m = re.match(r"^(.+?)-(.+?)-表1\.xlsx$", filename)
+    m = re.match(r"^(.+?)-(.+?)-表1\.xlsx$", fn)
     if m:
         return m.group(1), m.group(2)
     # 再匹配 编号-姓名表1.xlsx（只有一个横线）
-    m = re.match(r"^(.+?)-(.+?)表1\.xlsx$", filename)
+    m = re.match(r"^(.+?)-(.+?)表1\.xlsx$", fn)
     if m:
         return m.group(1), m.group(2)
     # 无横线时整体作为编号
-    base = filename.replace("表1.xlsx", "")
+    base = fn.replace("表1.xlsx", "")
     return base.rstrip("-"), ""
 
 
 def _parse_filename2(filename):
+    fn = _normalize_biao_suffix(filename)
     # 先匹配 编号-姓名-表2.xlsx
-    m = re.match(r"^(.+?)-(.+?)-表2\.xlsx$", filename)
+    m = re.match(r"^(.+?)-(.+?)-表2\.xlsx$", fn)
     if m:
         return m.group(1), m.group(2)
     # 再匹配 编号-姓名表2.xlsx（只有一个横线）
-    m = re.match(r"^(.+?)-(.+?)表2\.xlsx$", filename)
+    m = re.match(r"^(.+?)-(.+?)表2\.xlsx$", fn)
     if m:
         return m.group(1), m.group(2)
     # 无横线时整体作为编号
-    base = filename.replace("表2.xlsx", "")
+    base = fn.replace("表2.xlsx", "")
     return base.rstrip("-"), ""
 
 
@@ -655,7 +672,7 @@ def scan_folder(folder_path):
     xlsx_files = []
     for root, dirs, files in os.walk(folder_path):
         for f in files:
-            if f.endswith("表1.xlsx") and not f.startswith("~$"):
+            if _is_biao1(f):
                 rel = os.path.relpath(root, folder_path)
                 group = rel if rel != "." else os.path.basename(folder_path)
                 xlsx_files.append((os.path.join(root, f), group))
@@ -763,7 +780,7 @@ def scan_folder_b2(folder_path):
     xlsx_files = []
     for root, dirs, files in os.walk(folder_path):
         for f in files:
-            if f.endswith("表2.xlsx") and not f.startswith("~$"):
+            if _is_biao2(f):
                 rel = os.path.relpath(root, folder_path)
                 group = rel if rel != "." else os.path.basename(folder_path)
                 xlsx_files.append((os.path.join(root, f), group))
