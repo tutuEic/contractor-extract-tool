@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-承包方家庭成员 & 承包地块信息提取工具 v0.3.5
-从 D:\农经全延保 下所有表1/表2 xlsx 文件中提取信息，汇总到一张表。
+承包方家庭成员 & 承包地块信息提取工具 v0.3.8.1
+从 D:\农经全延保 下所有表1/表2 xlsx/xls 文件中提取信息，汇总到一张表。
 表1：同一户中同一人如在确权区和变动区都出现，合并为一条记录。减少的人口自动删除。
 表2：提取地块确权登记信息及地块增减变动情况。
+支持命名格式: 编号-姓名-表1.xlsx / 编号_姓名_表1_描述.xls
 """
 
 import os
@@ -15,13 +16,52 @@ from tkinter import ttk, filedialog, messagebox
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 
+try:
+    import xlrd
+    _HAS_XLRD = True
+except ImportError:
+    _HAS_XLRD = False
+
+
+# ── xlrd 兼容层 ────────────────────────────────────────────────────────────────
+# 让 .xls 文件的 sheet 对象兼容 openpyxl 的 .cell(r, c).value API
+
+class _XlsCell:
+    __slots__ = ('value',)
+    def __init__(self, value):
+        self.value = value
+
+
+class _XlsSheet:
+    def __init__(self, xlrd_sheet):
+        self._sh = xlrd_sheet
+        self.max_row = xlrd_sheet.nrows
+
+    def cell(self, r, c):
+        # xlrd: 0-based; openpyxl: 1-based
+        if 1 <= r <= self._sh.nrows and 1 <= c <= self._sh.ncols:
+            return _XlsCell(self._sh.cell_value(r - 1, c - 1))
+        return _XlsCell(None)
+
+
+def _load_workbook(filepath):
+    """统一加载 .xls / .xlsx，返回 (sheet, is_xls)"""
+    if filepath.lower().endswith('.xls') and not filepath.lower().endswith('.xlsx'):
+        if not _HAS_XLRD:
+            raise RuntimeError("需要安装 xlrd 来读取 .xls 文件: pip install xlrd")
+        wb = xlrd.open_workbook(filepath)
+        return _XlsSheet(wb.sheet_by_index(0))
+    else:
+        wb = openpyxl.load_workbook(filepath, data_only=True, read_only=False)
+        return wb.active
+
 
 # ── 常量 ──────────────────────────────────────────────────────────────────────
 
 OUTPUT_COLUMNS = (
     "所属组", "承包方编码", "承包方代表",
     "联系电话", "发包方名称", "户内人口",
-    "家庭成员姓名", "性别", "身份证号", "身份证+性别核对",
+    "家庭成员姓名", "性别", "身份证号", "是否为集体经济组织成员", "身份证+性别核对",
     "与承包方代表关系", "变动情况",
     "分、合户来源", "调查记事(附记)",
 )
@@ -170,18 +210,21 @@ def _check_gender(id_number, gender_text, relationship):
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
 
 def _is_biao1(filename):
-    """判断是否为表1文件，兼容 表1.xlsx / 表1（1）.xlsx / 表1--总(分户).xlsx 等"""
-    return bool(re.search(r'-表1[^\\]*\.xlsx$', filename)) and not filename.startswith("~$")
+    """判断是否为表1文件，兼容 表1/表一 + .xls/.xlsx + 横线/下划线"""
+    return bool(re.search(r'[-_]?表[1一].*\.xlsx?$', filename)) and not filename.startswith("~$")
 
 
 def _is_biao2(filename):
-    """判断是否为表2文件，兼容 表2.xlsx / 表2（1）.xlsx 等"""
-    return bool(re.search(r'-表2[^\\]*\.xlsx$', filename)) and not filename.startswith("~$")
+    """判断是否为表2文件，兼容 表2/表二 + .xls/.xlsx + 横线/下划线"""
+    return bool(re.search(r'[-_]?表[2二].*\.xlsx?$', filename)) and not filename.startswith("~$")
 
 
 def _normalize_biao_suffix(filename):
-    """把 表1（1）.xlsx / 表1 副本.xlsx 等统一为 表1.xlsx，用于解析文件名"""
-    return re.sub(r'(表[12])[^.]*\.xlsx$', r'\1.xlsx', filename)
+    """把 表一→表1, 表二→表2, 剥离表1后多余文字, 统一为 表1.ext"""
+    fn = re.sub(r'表一', '表1', filename)
+    fn = re.sub(r'表二', '表2', fn)
+    # 把 "表1_承包方家庭成员摸底表.xls" → "表1.xls"
+    return re.sub(r'(表[12]).*(\.[^.]+)$', r'\1\2', fn)
 
 
 def _parse_filename(filename):
@@ -191,23 +234,26 @@ def _parse_filename(filename):
     m_fh = re.search(r'[（(](分户[^)]*)[）)]', filename)
     if m_fh:
         fenhuyi = m_fh.group(1).strip()
-    # 先匹配 编号-姓名-表1.xlsx
-    m = re.match(r"^(.+?)-(.+?)-表1\.xlsx$", fn)
+    # 匹配 编号-姓名-表1.xlsx 或 编号_姓名_表1.xls
+    m = re.match(r"^(.+?)[-_](.+?)[-_]表1\.xlsx?$", fn)
     if m:
         code, name = m.group(1), m.group(2)
         if fenhuyi:
             name = f"{name}（{fenhuyi}）"
         return code, name
-    # 再匹配 编号-姓名表1.xlsx（只有一个横线）
-    m = re.match(r"^(.+?)-(.+?)表1\.xlsx$", fn)
+    # 匹配 编号-姓名表1.xlsx 或 编号_姓名表1.xls
+    m = re.match(r"^(.+?)[-_](.+?)表1\.xlsx?$", fn)
     if m:
         code, name = m.group(1), m.group(2)
         if fenhuyi:
             name = f"{name}（{fenhuyi}）"
         return code, name
     # 无横线时整体作为编号
-    base = fn.replace("表1.xlsx", "")
-    return base.rstrip("-"), ""
+    for ext in (".xlsx", ".xls"):
+        base = fn.replace(f"表1{ext}", "")
+        if base != fn:
+            return base.rstrip("-_"), ""
+    return fn, ""
 
 
 def _parse_filename2(filename):
@@ -217,23 +263,26 @@ def _parse_filename2(filename):
     m_fh = re.search(r'[（(](分户[^)]*)[）)]', filename)
     if m_fh:
         fenhuyi = m_fh.group(1).strip()
-    # 先匹配 编号-姓名-表2.xlsx
-    m = re.match(r"^(.+?)-(.+?)-表2\.xlsx$", fn)
+    # 匹配 编号-姓名-表2.xlsx 或 编号_姓名_表2.xls
+    m = re.match(r"^(.+?)[-_](.+?)[-_]表2\.xlsx?$", fn)
     if m:
         code, name = m.group(1), m.group(2)
         if fenhuyi:
             name = f"{name}（{fenhuyi}）"
         return code, name
-    # 再匹配 编号-姓名表2.xlsx（只有一个横线）
-    m = re.match(r"^(.+?)-(.+?)表2\.xlsx$", fn)
+    # 匹配 编号-姓名表2.xlsx 或 编号_姓名表2.xls
+    m = re.match(r"^(.+?)[-_](.+?)表2\.xlsx?$", fn)
     if m:
         code, name = m.group(1), m.group(2)
         if fenhuyi:
             name = f"{name}（{fenhuyi}）"
         return code, name
     # 无横线时整体作为编号
-    base = fn.replace("表2.xlsx", "")
-    return base.rstrip("-"), ""
+    for ext in (".xlsx", ".xls"):
+        base = fn.replace(f"表2{ext}", "")
+        if base != fn:
+            return base.rstrip("-_"), ""
+    return fn, ""
 
 
 def _normalize(text):
@@ -252,6 +301,37 @@ def _find_section_header(ws, keyword):
     return None
 
 
+def _detect_mdb(ws):
+    """检测是否为微信摸底表格式。区分依据：微信版标题含"附件"前缀，标准版无。"""
+    for r in range(1, min(6, ws.max_row + 1)):
+        for c in (1, 2):
+            v = str(ws.cell(r, c).value or "")
+            if v.startswith("附件"):
+                return True
+    return False
+
+
+def _find_mdb_sections(ws):
+    """摸底表分区: col2='序号' 的行是分区边界, 第1个=确权, 第2个=变动"""
+    headers = []
+    for r in range(1, ws.max_row + 1):
+        v = str(ws.cell(r, 2).value or "").strip()
+        if v == "序号":
+            headers.append(r)
+    h1 = headers[0] if len(headers) >= 1 else None
+    h2 = headers[1] if len(headers) >= 2 else None
+    return h1, h2
+
+
+# ── 列位配置 ──────────────────────────────────────────────────────────────────
+# (col_gender, col_id, col_relation, col_member, col_reason, col_jishi)
+_B1_STD = (6, 7, 9, 10, 13, 14)   # 标准格式
+_B1_MDB = (5, 6, 7, 8, 10, 11)   # 摸底表: 删空列, 性别C5/身份证C6/关系C7/成员C8/原因C10/记事C11
+# biao2: (col_area, col_reason, col_jishi)
+_B2_STD = (6, 13, 13)
+_B2_MDB = (5, 12, 12)
+
+
 def _is_seq_number(val):
     if val is None:
         return False
@@ -266,7 +346,11 @@ def _is_seq_number(val):
 
 # ── 表1 数据读取 ──────────────────────────────────────────────────────────────
 
-def _read_section_data(ws, header_row, end_row=None, include_change_col=False):
+def _read_section_data(ws, header_row, end_row=None, include_change_col=False, cols=None):
+    """读取数据区。cols=(col_gender, col_id, col_relation, col_member, col_reason) 可覆盖默认"""
+    if cols is None:
+        cols = _B1_STD
+    col_gender, col_id, col_relation, col_member, col_reason, col_jishi = cols
     results = []
     max_r = (end_row - 1) if end_row else ws.max_row
     for r in range(header_row + 1, max_r + 1):
@@ -282,19 +366,20 @@ def _read_section_data(ws, header_row, end_row=None, include_change_col=False):
         if any(kw in name_str for kw in ("承包方", "代表关系", "基础信息", "成员总数")):
             continue
         # 跳过性别列明显不是性别值的行（如"□有""☑无"等）
-        gender_val = str(ws.cell(r, 6).value or "").strip()
+        gender_val = str(ws.cell(r, col_gender).value or "").strip()
         if gender_val and gender_val not in ("男", "女", ""):
             if "□" in gender_val or "☑" in gender_val or "有" in gender_val or "无" in gender_val:
                 continue
         row_data = {
             "家庭成员姓名": name_str,
             "性别": gender_val,
-            "身份证号": str(ws.cell(r, 7).value or "").strip(),
-            "与承包方代表关系": str(ws.cell(r, 9).value or "").strip(),
+            "身份证号": str(ws.cell(r, col_id).value or "").strip(),
+            "是否为集体经济组织成员": str(ws.cell(r, col_member).value or "").strip(),
+            "与承包方代表关系": str(ws.cell(r, col_relation).value or "").strip(),
             "变动情况": str(ws.cell(r, 3).value or "").strip() if include_change_col else "",
         }
         if include_change_col:
-            row_data["_reason"] = str(ws.cell(r, 13).value or "").strip()
+            row_data["_reason"] = str(ws.cell(r, col_reason).value or "").strip()
         results.append(row_data)
     return results
 
@@ -315,17 +400,27 @@ def _should_remove(row):
 # ── 表1 解析 ──────────────────────────────────────────────────────────────────
 
 def parse_biao1(filepath, group_name):
-    wb = openpyxl.load_workbook(filepath, data_only=True, read_only=False)
-    ws = wb.active
+    ws = _load_workbook(filepath)
 
     fn = os.path.basename(filepath)
     file_code, file_name = _parse_filename(fn)
 
-    contractor = str(ws.cell(4, 5).value or file_name or "").strip()
-    phone = str(ws.cell(4, 10).value or "").strip()
-    fa_bao_fang = str(ws.cell(3, 1).value or "").strip()
-    fa_bao_fang = fa_bao_fang.replace("发包方名称：", "")
-    fa_bao_fang = fa_bao_fang.replace("发包方名称:", "").strip()
+    is_mdb = _detect_mdb(ws)
+    cols = _B1_MDB if is_mdb else _B1_STD
+
+    if is_mdb:
+        # 摸底表: 发包方同名行位, 其他字段左移
+        contractor = str(ws.cell(4, 4).value or file_name or "").strip()
+        phone = str(ws.cell(4, 9).value or "").strip()
+        fa_bao_fang = str(ws.cell(3, 1).value or "").strip()
+        contract_no = str(ws.cell(5, 7).value or "").strip()
+    else:
+        contractor = str(ws.cell(4, 5).value or file_name or "").strip()
+        phone = str(ws.cell(4, 10).value or "").strip()
+        fa_bao_fang = str(ws.cell(3, 1).value or "").strip()
+        contract_no = str(ws.cell(5, 9).value or "").strip()
+
+    fa_bao_fang = fa_bao_fang.replace("发包方名称：", "").replace("发包方名称:", "").strip()
 
     # 分户文件表头布局不同，读到的是表头文本而非数据 → 回退到文件名
     _header_kw = ("承包方", "基础信息", "代表关系", "□有", "☑无", "□是", "☑是", "成员总数")
@@ -337,8 +432,6 @@ def parse_biao1(filepath, group_name):
         phone = ""
 
     # 提取承包方编码：确权承包合同编号去掉末尾字母
-    contract_no = str(ws.cell(5, 9).value or "").strip()
-    # 分户文件R5C9是表头文本，不是合同编号
     _header_kw2 = ("承包方", "代表关系", "基础信息", "□有", "☑无", "序号", "成员", "姓名", "性别", "身份证", "备注", "变化")
     if any(kw in contract_no for kw in _header_kw2):
         contract_no = ""
@@ -353,26 +446,29 @@ def parse_biao1(filepath, group_name):
         "发包方名称": fa_bao_fang,
     }
 
-    h1 = _find_section_header(ws, "确权")
-    h2 = _find_section_header(ws, "变动")
+    if is_mdb:
+        h1, h2 = _find_mdb_sections(ws)
+    else:
+        h1 = _find_section_header(ws, "确权")
+        h2 = _find_section_header(ws, "变动")
 
-    section1 = _read_section_data(ws, h1, end_row=h2, include_change_col=False) if h1 else []
-    section2 = _read_section_data(ws, h2, include_change_col=True) if h2 else []
-    # 提取调查记事(附记)：扫描确权区和变动区所有行的第14列
+    section1 = _read_section_data(ws, h1, end_row=h2, include_change_col=False, cols=cols) if h1 else []
+    section2 = _read_section_data(ws, h2, include_change_col=True, cols=cols) if h2 else []
+    # 提取调查记事(附记)：扫描确权区和变动区
+    jishi_col = cols[5]  # col_jishi
     jishi_parts = []
     if h1:
         end1 = (h2 - 1) if h2 else ws.max_row
         for r in range(h1 + 1, end1 + 1):
-            v = str(ws.cell(r, 14).value or "").strip()
+            v = str(ws.cell(r, jishi_col).value or "").strip()
             if v and "记事" not in v and v not in jishi_parts:
                 jishi_parts.append(v)
     if h2:
         for r in range(h2 + 1, ws.max_row + 1):
-            v = str(ws.cell(r, 14).value or "").strip()
+            v = str(ws.cell(r, jishi_col).value or "").strip()
             if v and "记事" not in v and v not in jishi_parts:
                 jishi_parts.append(v)
     info["调查记事(附记)"] = "；".join(jishi_parts)
-    wb.close()
 
     s1_key_idx = {}
     s1_name_idx = {}  # name -> index (all entries, for name fallback)
@@ -410,6 +506,10 @@ def parse_biao1(filepath, group_name):
                 new_gender = row.get("性别", "").strip()
                 if new_gender:
                     section1[idx]["性别"] = new_gender
+            # 同步"是否为集体经济组织成员"（变动区有值时）
+            new_member = row.get("是否为集体经济组织成员", "").strip()
+            if new_member:
+                section1[idx]["是否为集体经济组织成员"] = new_member
             # 变动区姓名与确权区不同时（如错别字纠正），用变动区的值
             new_name = row.get("家庭成员姓名", "").strip()
             old_name = section1[idx].get("家庭成员姓名", "").strip()
@@ -542,16 +642,26 @@ def parse_biao1(filepath, group_name):
 # ── 表2 解析 ──────────────────────────────────────────────────────────────────
 
 def parse_biao2(filepath, group_name):
-    wb = openpyxl.load_workbook(filepath, data_only=True, read_only=False)
-    ws = wb.active
+    ws = _load_workbook(filepath)
 
     fn = os.path.basename(filepath)
     file_code, file_name = _parse_filename2(fn)
 
-    contractor = str(ws.cell(4, 4).value or file_name or "").strip()
-    phone = str(ws.cell(4, 6).value or "").strip()
-    total_area = str(ws.cell(4, 10).value or "").strip()
-    total_plots = str(ws.cell(4, 14).value or "").strip()
+    is_mdb = _detect_mdb(ws)
+    b2_cols = _B2_MDB if is_mdb else _B2_STD
+    col_area, col_reason, col_jishi = b2_cols
+
+    if is_mdb:
+        # 摸底表: info 行在 row 3
+        contractor = str(ws.cell(3, 3).value or file_name or "").strip()
+        phone = str(ws.cell(3, 7).value or "").strip()
+        total_area = str(ws.cell(3, 10).value or "").strip()
+        total_plots = str(ws.cell(3, 12).value or "").strip()
+    else:
+        contractor = str(ws.cell(4, 4).value or file_name or "").strip()
+        phone = str(ws.cell(4, 6).value or "").strip()
+        total_area = str(ws.cell(4, 10).value or "").strip()
+        total_plots = str(ws.cell(4, 14).value or "").strip()
 
     # 分户文件表头布局不同，读到的是表头文本而非数据 → 回退到文件名
     _header_kw = ("承包方", "基础信息", "代表关系", "□有", "☑无", "□是", "☑是", "成员总数", "序号", "姓名", "性别", "身份证", "备注", "变化")
@@ -579,15 +689,18 @@ def parse_biao2(filepath, group_name):
         "地块总数": total_plots,
     }
 
-    h1 = _find_section_header(ws, "确权")
-    h2 = _find_section_header(ws, "变动")
+    if is_mdb:
+        h1, h2 = _find_mdb_sections(ws)
+    else:
+        h1 = _find_section_header(ws, "确权")
+        h2 = _find_section_header(ws, "变动")
 
-    # 读取调查记事(确权区C13列，跳过表头行)
+    # 读取调查记事
     jishi_parts = []
     if h1:
         end_j = (h2 - 1) if h2 else ws.max_row
         for r in range(h1 + 1, end_j + 1):
-            v = str(ws.cell(r, 13).value or "").strip()
+            v = str(ws.cell(r, col_jishi).value or "").strip()
             if v and "记事" not in v and v not in jishi_parts:
                 jishi_parts.append(v)
     info["调查记事"] = "；".join(jishi_parts)
@@ -603,30 +716,68 @@ def parse_biao2(filepath, group_name):
             plots.append({
                 "地块名称": str(name).strip(),
                 "地块编码": str(ws.cell(r, 4).value or "").strip(),
-                "地块面积(亩)": str(ws.cell(r, 6).value or "").strip(),
+                "地块面积(亩)": str(ws.cell(r, col_area).value or "").strip(),
                 "东至": str(ws.cell(r, 7).value or "").strip(),
                 "西至": str(ws.cell(r, 8).value or "").strip(),
                 "南至": str(ws.cell(r, 9).value or "").strip(),
                 "北至": str(ws.cell(r, 10).value or "").strip(),
             })
 
-    # Read changes
+    # 分户文件检测: 确权区为空，数据全在变动区
+    is_fenhu = (not plots) and h2
+    if is_fenhu:
+        _fenhu_skip_kw = ("序号", "地块名称", "变动情况", "承包方", "基础信息", "四至", "东至", "面积")
+        for r in range(h2 + 1, ws.max_row + 1):
+            name = ws.cell(r, 3).value  # 分户: C3=地块名称
+            if not name or str(name).strip() == "":
+                continue
+            name_str = str(name).strip()
+            if any(kw in name_str for kw in _fenhu_skip_kw):
+                continue
+            code = str(ws.cell(r, 4).value or "").strip()  # 分户: C4=地块编码
+            # 跳过没有编码的行（可能是表头或空行）
+            if not code:
+                continue
+            reason = str(ws.cell(r, col_reason).value or "").strip()
+            plots.append({
+                "地块名称": name_str,
+                "地块编码": code,
+                "地块面积(亩)": str(ws.cell(r, col_area).value or "").strip(),
+                "东至": str(ws.cell(r, 7).value or "").strip(),
+                "西至": str(ws.cell(r, 8).value or "").strip(),
+                "南至": str(ws.cell(r, 9).value or "").strip(),
+                "北至": str(ws.cell(r, 10).value or "").strip(),
+                "_变动原因": reason,
+            })
+        # 分户文件的地块总数来自实际读取数量
+        if not total_plots or total_plots in _header_kw:
+            total_plots = str(len(plots))
+            info["地块总数"] = total_plots
+
+    # Read changes (only for non-分户 files)
     changes = {}
-    if h2:
+    if h2 and not is_fenhu:
+        _chg_skip_kw = ("序号", "地块名称", "变动情况", "承包方", "基础信息", "四至", "东至", "面积")
         for r in range(h2 + 1, ws.max_row + 1):
             name = ws.cell(r, 4).value
             if not name or str(name).strip() == "":
                 continue
-            changes[str(name).strip()] = {
-                "变动情况": str(ws.cell(r, 3).value or "").strip(),
+            name_str = str(name).strip()
+            # 跳过子表头行（含关键词）和纯序号行（变动情况为空）
+            change_type = str(ws.cell(r, 3).value or "").strip()
+            if not change_type:
+                continue
+            if any(kw in name_str for kw in _chg_skip_kw):
+                continue
+            changes[name_str] = {
+                "变动情况": change_type,
                 "变动面积(亩)": str(ws.cell(r, 11).value or "").strip(),
-                "变动原因": str(ws.cell(r, 13).value or "").strip(),
+                "变动原因": str(ws.cell(r, col_reason).value or "").strip(),
                 "变动后东至": str(ws.cell(r, 7).value or "").strip(),
                 "变动后西至": str(ws.cell(r, 8).value or "").strip(),
                 "变动后南至": str(ws.cell(r, 9).value or "").strip(),
                 "变动后北至": str(ws.cell(r, 10).value or "").strip(),
             }
-    wb.close()
 
     # Merge: compute actual areas based on changes
     def _safe_float(s):
@@ -664,6 +815,8 @@ def parse_biao2(filepath, group_name):
             }
         else:
             actual_area = confirmed_area
+            # 分户文件的地块: 变动情况="分户"，变动原因来自文件
+            fenhu_reason = p.pop("_变动原因", "")
             row = {
                 "地块序号": i,
                 "地块名称": p["地块名称"],
@@ -671,9 +824,9 @@ def parse_biao2(filepath, group_name):
                 "地块面积(亩)": p["地块面积(亩)"],
                 "东至": p["东至"], "西至": p["西至"],
                 "南至": p["南至"], "北至": p["北至"],
-                "变动情况": "无",
+                "变动情况": "分户" if fenhu_reason else "无",
                 "变动面积(亩)": "",
-                "变动原因": "",
+                "变动原因": fenhu_reason,
                 "变动后东至": "无", "变动后西至": "无",
                 "变动后南至": "无", "变动后北至": "无",
             }
@@ -852,7 +1005,7 @@ class App(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("承包方家庭成员 & 承包地块提取工具 v0.3.4")
+        self.title("承包方家庭成员 & 承包地块提取工具 v0.3.8.1")
         self.geometry("1200x650")
         self.minsize(900, 500)
         self.results_b1 = []
@@ -932,7 +1085,7 @@ class App(tk.Tk):
         col_widths = {
             "所属组": 60, "承包方编码": 200, "承包合同编号": 200, "承包方代表": 90,
             "发包方名称": 160, "户内人口": 50,
-            "家庭成员姓名": 90, "性别": 50, "身份证号": 180, "身份证+性别核对": 60,
+            "家庭成员姓名": 90, "性别": 50, "身份证号": 180, "是否为集体经济组织成员": 100, "身份证+性别核对": 60,
             "联系电话": 120,
             "与承包方代表关系": 120, "变动情况": 70,
             "调查记事(附记)": 200,
@@ -1108,7 +1261,7 @@ class App(tk.Tk):
                 for ci in range(6):
                     vals[ci] = ""
             if (not is_b2) and prev_key == cur_key:
-                for ci in (5, 13):  # 户内人口, 调查记事
+                for ci in (5, 14):  # 户内人口, 调查记事
                     vals[ci] = ""
             if prev_key is not None and cur_key != prev_key:
                 parity = 1 - parity
@@ -1121,7 +1274,7 @@ class App(tk.Tk):
             fill = _FILL_A if parity == 0 else _FILL_B
             for ci, val in enumerate(vals, 1):
                 cell = ws.cell(cur_row, ci, val)
-                if ci == 10 and val == "错误":
+                if ci == 11 and val == "错误":
                     cell.fill = _ERR_FILL
                     cell.font = Font(color="FFFFFF", bold=True)
                 else:
